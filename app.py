@@ -87,6 +87,8 @@ with st.sidebar:
                  "Other"],
         default=[]
     )
+    st.divider()
+    debug_mode = st.checkbox("🔧 Debug-Modus (URL, Status, Headers anzeigen)", value=False)
     fetch_btn = st.button("🔄 Fetch Corporate Actions", use_container_width=True, type="primary")
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -156,6 +158,12 @@ if fetch_btn:
             st.session_state["edi_rate_remain"] = result["meta"]["rate_remaining"]
             st.session_state["edi_rate_limit"]  = result["meta"]["rate_limit"]
             st.session_state["edi_isin"]        = result["meta"]["isin"]
+            st.session_state["edi_debug"]       = {
+                "url":          result["meta"]["url"],
+                "status_code":  result["meta"]["status_code"],
+                "body_preview": result["meta"]["body_preview"],
+                "headers":      result["meta"]["headers"],
+            }
         except edi.EDIAPIError as e:
             st.error(f"❌ {e}")
             st.stop()
@@ -178,6 +186,23 @@ m3.metric("Total Records", total_recs)
 m4.metric("Rate Limit", rate_limit)
 m5.metric("Rate Remaining", rate_remain)
 st.divider()
+
+# ── Debug Panel ───────────────────────────────────────────────────────────────
+if debug_mode and "edi_debug" in st.session_state:
+    dbg = st.session_state["edi_debug"]
+    with st.expander("🔧 Debug Info — letzter API-Call", expanded=True):
+        st.markdown(f"**Status Code:** `{dbg['status_code']}`")
+        st.markdown(f"**URL:**")
+        st.code(dbg["url"], language="text")
+        st.markdown(f"**Records in session_state:** {len(records)}")
+        st.markdown("**Response Headers:**")
+        st.json(dbg["headers"])
+        if dbg["body_preview"]:
+            st.markdown("**Response Body (erste 500 Zeichen):**")
+            st.code(dbg["body_preview"], language="json")
+        else:
+            st.info("Response Body ist leer (kommt typischerweise bei Status 204).")
+    st.divider()
 
 if not records:
     st.warning("No corporate action records found for the given parameters.")
