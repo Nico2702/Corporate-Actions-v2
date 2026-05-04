@@ -360,7 +360,7 @@ with tab1:
                          })
 
 with tab2:
-    raw_cols = [c for c in RAW_COLUMNS if c in df.columns]
+    raw_cols = [c for c in edi.RAW_COLUMNS if c in df.columns]
     st.dataframe(df[raw_cols], use_container_width=True, height=500)
 
 with tab3:
@@ -494,7 +494,7 @@ with tab3:
 
         with c2:
             st.markdown("**📄 Raw Fields**")
-            st.json({col: sel.get(col, "") for col in RAW_COLUMNS})
+            st.json({col: sel.get(col, "") for col in edi.RAW_COLUMNS})
             st.markdown("**🔧 Derived Fields**")
             derived_cols = ["Event_Type", "Subtype", "Deal_Type",
                             "Dividend_Amount", "Frankdiv", "CFI", "Tax_Marker", "Adjusted_WHT", "Depositary_Fee", "Tax_Relief_Fee", "Dividend_Currency",
