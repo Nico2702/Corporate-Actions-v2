@@ -1047,13 +1047,16 @@ def fetch_records(
     except requests.exceptions.RequestException as e:
         raise EDIAPIError(f"Unexpected error: {e}") from e
 
-    if response.status_code != 200:
+    # 204 No Content = success, but no records for this query (not an error).
+    if response.status_code == 204:
+        raw_records = []
+    elif response.status_code == 200:
+        raw_records = response.json().get("jsondata", [])
+    else:
         raise EDIAPIError(
             f"API Error {response.status_code}: {response.text[:500]}",
             status_code=response.status_code,
         )
-
-    raw_records = response.json().get("jsondata", [])
     return {
         "records": normalize_dates(raw_records),
         "meta": {
