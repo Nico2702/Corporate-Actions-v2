@@ -161,6 +161,7 @@ SPLIT_FWD_CODES  = ("SPL", "FSP")
 SPLIT_REV_CODES  = ("RSP",)
 SPLIT_CODES      = SPLIT_FWD_CODES + SPLIT_REV_CODES
 RIGHTS_CODES     = ("DSR",)
+SPINOFF_CODES    = ("SPO",)
 
 # Date fields we touch in normalize_dates (defensive — FactSet already gives ISO).
 _DATE_FIELDS = ("effectiveDate", "payDate", "recordDate", "announcementDate")
@@ -229,6 +230,12 @@ def classify_event(row: dict) -> dict:
         result["event_type"] = "Rights Issue"
         return result
 
+    # ── Spin-Off ──────────────────────────────────────────────────────────────
+    if eventcd in SPINOFF_CODES:
+        result["event_type"] = "Spin-Off"
+        result["subtype"]    = "Demerger"
+        return result
+
     return result
 
 
@@ -239,6 +246,20 @@ def _safe_div(a, b):
         return a / b if b else None
     except (TypeError, ValueError):
         return None
+
+
+def _fmt_terms(new, old) -> str:
+    """Format 'new : old' — integers when whole numbers, raw values otherwise.
+    Mirrors edi.fmt_stock_terms so both providers produce identical strings."""
+    try:
+        if new is None or old is None or not old:
+            return ""
+        rn, ro = float(new), float(old)
+        rn_str = str(int(rn)) if rn == int(rn) else str(new)
+        ro_str = str(int(ro)) if ro == int(ro) else str(old)
+        return f"{rn_str} : {ro_str}"
+    except (TypeError, ValueError):
+        return ""
 
 
 def build_rows(processed_records, isin: str = ""):
@@ -365,6 +386,14 @@ def build_rows(processed_records, isin: str = ""):
             ratio = _safe_div(r.get("distNewTerm"), r.get("distOldTerm"))
             if ratio is not None:
                 row["Sub_Ratio"] = f"{ratio:.6f}"
+
+        # ── Spin-Off ──────────────────────────────────────────────────────────
+        if eventcd in SPINOFF_CODES:
+            new, old = r.get("distNewTerm"), r.get("distOldTerm")
+            ratio = _safe_div(new, old)
+            if ratio is not None:
+                row["ECA_Stock_Ratio"] = f"{ratio:.6f}"
+            row["ECA_Stock_Terms"] = _fmt_terms(new, old)
 
         rows.append(row)
     return rows
