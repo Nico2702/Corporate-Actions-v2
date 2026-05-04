@@ -70,9 +70,9 @@ with st.sidebar:
     st.markdown("### 🔍 Query Parameters")
     isin   = st.text_input("ISIN", placeholder="e.g. CH1256740924")
     op_mic = st.text_input("Operational MIC", placeholder="e.g. XSWX")
-    use_dates = st.checkbox("Filter by Ex-Date (from)", value=False)
+    use_dates = st.checkbox("Filter From Date", value=True)
     if use_dates:
-        from_date = st.date_input("From Ex-Date", value=date.today() - timedelta(days=365))
+        from_date = st.date_input("From Date", value=date.today() - timedelta(days=365))
     else:
         from_date = None
     st.divider()
