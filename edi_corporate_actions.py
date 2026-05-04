@@ -813,14 +813,15 @@ def derive_eca_status(r, eventcd):
     return "Pending"
 
 
-def build_rows(processed_records, show_ignored):
+def build_rows(processed_records):
     rows = []
     for r in processed_records:
         is_election       = r.get("_is_election", False) and r.get("marker", "") != "SPL"
         is_tkovr_election = r.get("_is_tkovr_election", False)
         cl                = classify_event(r)
 
-        if cl["ignore"] and not show_ignored:
+        # Always skip ignored events (WAR / Warrants, Debenture legs in TKOVR).
+        if cl["ignore"]:
             continue
 
         row = {col: r.get(col, "") for col in RAW_COLUMNS}
