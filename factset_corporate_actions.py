@@ -151,18 +151,220 @@ def fetch_records(
     }
 
 
-# ── Pipeline (stubs — to be implemented once we have a sample response) ──────
+# ── Pipeline ─────────────────────────────────────────────────────────────────
+
+# Spec-defined event-code groups (used for both classify & build_rows).
+DIVIDEND_CODES   = ("DVC", "DVCD", "DRP")
+STOCK_DIV_PCT    = ("DVS", "DVSS")        # use distPct directly
+STOCK_DIV_RATIO  = ("BNS", "BNSS")        # ratio = distNewTerm / distOldTerm
+SPLIT_FWD_CODES  = ("SPL", "FSP")
+SPLIT_REV_CODES  = ("RSP",)
+SPLIT_CODES      = SPLIT_FWD_CODES + SPLIT_REV_CODES
+RIGHTS_CODES     = ("DSR",)
+
+# Date fields we touch in normalize_dates (defensive — FactSet already gives ISO).
+_DATE_FIELDS = ("effectiveDate", "payDate", "recordDate", "announcementDate")
+
+
 def normalize_dates(records):
-    raise NotImplementedError("FactSet pipeline not yet implemented.")
+    """Step 1 — normalize date strings (FactSet already uses ISO YYYY-MM-DD,
+    but we replace stray '/' just in case)."""
+    for r in records:
+        for f in _DATE_FIELDS:
+            v = r.get(f)
+            if v and isinstance(v, str):
+                r[f] = v.replace("/", "-")
+    return records
+
 
 def deduplicate(records):
-    raise NotImplementedError("FactSet pipeline not yet implemented.")
+    """Step 3 — keep one record per eventId. FactSet has no concept of
+    optionid (no multi-leg events in our spec)."""
+    seen = set()
+    out = []
+    for r in records:
+        key = r.get("eventId")
+        if key and key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
+    return out
+
 
 def merge_events(records):
-    raise NotImplementedError("FactSet pipeline not yet implemented.")
+    """Step 4 — for now a no-op (FactSet spec doesn't define multi-leg merging
+    like EDI's TKOVR-Election or DIV+DRIP). Preserved for API symmetry."""
+    return list(records)
+
 
 def classify_event(row: dict) -> dict:
-    raise NotImplementedError("FactSet pipeline not yet implemented.")
+    """Classify a FactSet record into our standard event_type / subtype.
+    Anything outside the spec lands as 'Other'."""
+    eventcd  = (row.get("eventTypeCode") or "").upper()
+    spec_flg = row.get("dividendsSpecFlag")
+    result   = {"event_type": "Other", "subtype": "", "ignore": False}
 
-def build_rows(processed_records):
-    raise NotImplementedError("FactSet pipeline not yet implemented.")
+    # ── Dividends ─────────────────────────────────────────────────────────────
+    if eventcd in DIVIDEND_CODES:
+        if spec_flg == 1:
+            result["event_type"] = "Special Dividend"
+        else:
+            # spec_flg = 0 OR null → Cash Dividend per spec
+            result["event_type"] = "Cash Dividend"
+        return result
+
+    # ── Stock Dividend ────────────────────────────────────────────────────────
+    if eventcd in STOCK_DIV_PCT or eventcd in STOCK_DIV_RATIO:
+        result["event_type"] = "Stock Dividend"
+        return result
+
+    # ── Stock Split ───────────────────────────────────────────────────────────
+    if eventcd in SPLIT_CODES:
+        result["event_type"] = "Stock Split"
+        result["subtype"]    = "Reverse" if eventcd in SPLIT_REV_CODES else "Forward"
+        return result
+
+    # ── Rights Issue ──────────────────────────────────────────────────────────
+    if eventcd in RIGHTS_CODES:
+        result["event_type"] = "Rights Issue"
+        return result
+
+    return result
+
+
+def _safe_div(a, b):
+    """Float division that swallows None/zero/string errors."""
+    try:
+        a, b = float(a), float(b)
+        return a / b if b else None
+    except (TypeError, ValueError):
+        return None
+
+
+def build_rows(processed_records, isin: str = ""):
+    """Step 5 — build standardized output rows matching EDI's column schema.
+
+    Args:
+      processed_records: deduped + merged FactSet records.
+      isin:              user-supplied ISIN from the sidebar — copied into
+                         each row so the Validation tab can match against EDI.
+    """
+    rows = []
+    for r in processed_records:
+        cl       = classify_event(r)
+        eventcd  = (r.get("eventTypeCode") or "").upper()
+        div_type = r.get("divTypeCode")
+
+        # ── Initialise the row with all EDI-aligned columns (mostly empty) ────
+        row = {
+            # Core
+            "Event_Type":   cl["event_type"],
+            "Subtype":      cl["subtype"],
+            "Evt_Status":   r.get("dividendStatus") or "",
+            "eventid":      r.get("eventId", ""),
+            "optionid":     "1",     # FactSet has no optionid concept
+            "eventcd":      eventcd,
+            "marker":       "",
+            "paytypecd":    "",
+
+            # Identifiers
+            "isin":           isin,                    # from user input
+            "issuername":     "",                       # not in FactSet response
+            "operationalmic": "",                       # not in FactSet response
+            "fsymId":         r.get("fsymId", ""),     # FactSet-specific extra
+
+            # Dates
+            "exdt":           r.get("effectiveDate", ""),
+            "paydt":          r.get("payDate", ""),
+            "recorddt":       r.get("recordDate", ""),
+            "declarationdt":  r.get("announcementDate", ""),
+            "effectivedt":    r.get("effectiveDate", ""),
+
+            # Dividend fields
+            "Dividend_Amount":   "",
+            "Tax_Marker":        "",
+            "Adjusted_WHT":      "",
+            "Frankdiv":          "",
+            "CFI":               "",
+            "Depositary_Fee":    "",
+            "Tax_Relief_Fee":    "",
+            "Dividend_Currency": "",
+
+            # Stock / Split / Rights
+            "Stock_Div_Pct":   "",
+            "Stock_Div_Ratio": "",
+            "Split_Ratio":     "",
+            "Split_Terms":     "",
+            "Sub_Price":       "",
+            "Sub_Currency":    "",
+            "Sub_Ratio":       "",
+            "Default_Option":  "",
+
+            # M&A / Spin-Off / ID Change — not classified by FactSet spec yet
+            "Deal_Type":              "",
+            "MA_Offeror":             "",
+            "MA_Hostile":              "",
+            "MA_Mand_Vol":             "",
+            "MA_Event_Subtype":       "",
+            "MA_Cash_Terms":          "",
+            "MA_Cash_Terms_Currency": "",
+            "ECA_Stock_Ratio":        "",
+            "ECA_Stock_Terms":        "",
+            "MA_Offeror_ISIN":        "",
+            "MA_Offeror_Ticker":      "",
+            "MA_Effective_Date":      "",
+            "MA_Exp_Completion":      "",
+            "MA_Merger_Status":       "",
+            "MA_Close_Date":          "",
+            "ECA_Status":             "",
+
+            # Meta
+            "REIT_Flag":     False,
+            "Creation_Date": r.get("announcementDate", ""),
+            "feedgendate":   "",
+        }
+
+        # ── Cash / Special Dividend ───────────────────────────────────────────
+        if eventcd in DIVIDEND_CODES:
+            row["Dividend_Amount"]   = r.get("amtGrossDecUnadj") or ""
+            row["Dividend_Currency"] = r.get("declaredCurrency") or ""
+            # Spec: divTypeCode=21 → Tax_Marker=NET (else GROSS)
+            row["Tax_Marker"] = "NET" if div_type == 21 else "GROSS"
+
+        # ── Stock Dividend (DVS/DVSS use distPct directly) ────────────────────
+        if eventcd in STOCK_DIV_PCT:
+            pct = r.get("distPct")
+            if pct is not None:
+                try:
+                    p = float(pct)
+                    row["Stock_Div_Pct"]   = f"{p:.4f}%"
+                    row["Stock_Div_Ratio"] = f"{1 + p/100:.6f}"
+                except (TypeError, ValueError):
+                    pass
+
+        # ── Stock Dividend (BNS/BNSS use new/old ratio) ───────────────────────
+        if eventcd in STOCK_DIV_RATIO:
+            ratio = _safe_div(r.get("distNewTerm"), r.get("distOldTerm"))
+            if ratio is not None:
+                row["Stock_Div_Pct"]   = f"{ratio*100:.4f}%"
+                row["Stock_Div_Ratio"] = f"{1 + ratio:.6f}"
+
+        # ── Stock Split ───────────────────────────────────────────────────────
+        if eventcd in SPLIT_CODES:
+            ratio = _safe_div(r.get("distNewTerm"), r.get("distOldTerm"))
+            if ratio is not None:
+                row["Split_Ratio"] = f"{ratio:.6f}"
+            new, old = r.get("distNewTerm"), r.get("distOldTerm")
+            if new and old:
+                row["Split_Terms"] = f"{new} : {old}"
+
+        # ── Rights Issue ──────────────────────────────────────────────────────
+        if eventcd in RIGHTS_CODES:
+            row["Sub_Price"]    = r.get("rightsIssuePrice") or ""
+            row["Sub_Currency"] = r.get("rightsIssueCurrency") or ""
+            ratio = _safe_div(r.get("distNewTerm"), r.get("distOldTerm"))
+            if ratio is not None:
+                row["Sub_Ratio"] = f"{ratio:.6f}"
+
+        rows.append(row)
+    return rows
