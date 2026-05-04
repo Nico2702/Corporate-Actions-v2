@@ -21,6 +21,7 @@ Spec: NaroIX EDI CA Integration Specification v2.3
 import requests
 import pandas as pd
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
 
@@ -995,54 +996,44 @@ def build_rows(processed_records, show_ignored):
 
 
 # ── API ───────────────────────────────────────────────────────────────────────
-def fetch_records(
+def _fetch_one(
     isin: str,
     token: str,
-    operational_mic: str | None = None,
-    from_date: date | None = None,
-    timeout: int = 30,
-) -> dict:
+    operational_mic: str | None,
+    from_date: date | None,
+    date_param_name: str | None,
+    timeout: int,
+) -> tuple[list, dict]:
     """
-    Calls the EDI GetHistoricalCorporateActions endpoint and normalizes dates
-    (Step 1 of the pipeline).
+    Performs a single EDI API call.
 
     Args:
-      isin:            ISIN to query (required).
-      token:           Bearer token for the `authorization` header (required).
-      operational_mic: Optional MIC filter (e.g. "XSWX").
-      from_date:       Optional ex-date lower bound.
-      timeout:         HTTP timeout in seconds.
+      date_param_name: 'fromexdate', 'fromdate', or None to omit the date filter.
+                       Only takes effect when from_date is also set.
 
     Returns:
-      {
-        "records": [...],     # list of normalized raw records (jsondata)
-        "meta": {
-            "isin":           str,
-            "record_count":   str,   # X-Record-Count header
-            "total_records":  str,   # X-Total-Records header
-            "rate_limit":     str,   # X-Ratelimit-Limit header
-            "rate_remaining": str,   # X-Ratelimit-Remaining header
-        },
-      }
+      (raw_records, call_info) where call_info contains URL, status, headers,
+      body preview, and the relevant rate-limit / record-count headers.
 
     Raises:
-      EDIAPIError: on non-200 response or connection failure.
+      EDIAPIError: on non-200/204 response or connection failure.
     """
     url = (
         f"https://api3.exchange-data.com/GetHistoricalCorporateActions"
         f"?format=JSON&ISIN={isin}"
         f"{'&operationalMic=' + operational_mic if operational_mic else ''}"
-        f"{'&fromexdate=' + from_date.strftime('%Y-%m-%d') if from_date else ''}"
     )
+    if from_date and date_param_name:
+        url += f"&{date_param_name}={from_date.strftime('%Y-%m-%d')}"
 
     try:
         response = requests.get(url, headers={"authorization": token}, timeout=timeout)
     except requests.exceptions.ConnectionError as e:
-        raise EDIAPIError("Could not connect to EDI API.") from e
+        raise EDIAPIError(f"Could not connect to EDI API ({date_param_name or 'no-date'}).") from e
     except requests.exceptions.Timeout as e:
-        raise EDIAPIError(f"EDI API request timed out after {timeout}s.") from e
+        raise EDIAPIError(f"EDI API request timed out after {timeout}s ({date_param_name or 'no-date'}).") from e
     except requests.exceptions.RequestException as e:
-        raise EDIAPIError(f"Unexpected error: {e}") from e
+        raise EDIAPIError(f"Unexpected error ({date_param_name or 'no-date'}): {e}") from e
 
     # 204 No Content = success, but no records for this query (not an error).
     if response.status_code == 204:
@@ -1051,21 +1042,127 @@ def fetch_records(
         raw_records = response.json().get("jsondata", [])
     else:
         raise EDIAPIError(
-            f"API Error {response.status_code}: {response.text[:500]}",
+            f"API Error {response.status_code} ({date_param_name or 'no-date'}): {response.text[:500]}",
             status_code=response.status_code,
         )
+
+    call_info = {
+        "label":          date_param_name or "no-date",
+        "url":            url,
+        "status_code":    response.status_code,
+        "body_preview":   response.text[:500] if response.text else "",
+        "headers":        dict(response.headers),
+        "record_count":   response.headers.get("X-Record-Count",       "–"),
+        "total_records":  response.headers.get("X-Total-Records",      "–"),
+        "rate_limit":     response.headers.get("X-Ratelimit-Limit",    "–"),
+        "rate_remaining": response.headers.get("X-Ratelimit-Remaining","–"),
+    }
+    return raw_records, call_info
+
+
+def _min_str_int(*values: str) -> str:
+    """Return the smallest of several stringly-typed integers (e.g. rate-limit
+    headers). Falls back to '–' if none parse as ints."""
+    nums = []
+    for v in values:
+        try:
+            nums.append(int(v))
+        except (TypeError, ValueError):
+            continue
+    return str(min(nums)) if nums else "–"
+
+
+def _max_str_int(*values: str) -> str:
+    """Same as _min_str_int but returns the largest value."""
+    nums = []
+    for v in values:
+        try:
+            nums.append(int(v))
+        except (TypeError, ValueError):
+            continue
+    return str(max(nums)) if nums else "–"
+
+
+def fetch_records(
+    isin: str,
+    token: str,
+    operational_mic: str | None = None,
+    from_date: date | None = None,
+    timeout: int = 30,
+) -> dict:
+    """
+    Fetches Corporate Actions from the EDI API and normalizes dates (Step 1).
+
+    When `from_date` is set, performs TWO calls in parallel — one with
+    `fromexdate=` (filters by ex-date) and one with `fromdate=` (broader
+    filter that catches M&A / Spin-Off events without an ex-date) — and
+    deduplicates the merged result by (eventid, optionid, operationalmic).
+
+    When `from_date` is None, only a single call is made (no date filter).
+
+    Args:
+      isin:            ISIN to query (required).
+      token:           Bearer token for the `authorization` header (required).
+      operational_mic: Optional MIC filter (e.g. "XSWX").
+      from_date:       Optional ex-date lower bound. Triggers dual-fetch if set.
+      timeout:         HTTP timeout in seconds (per call).
+
+    Returns:
+      {
+        "records": [...],     # merged & deduplicated, normalized records
+        "meta": {
+            "isin":           str,
+            "record_count":   str,   # number of unique records returned
+            "total_records":  str,   # max of both calls' X-Total-Records
+            "rate_limit":     str,
+            "rate_remaining": str,   # MIN across calls (worst-case headroom)
+            "calls":          [call_info, ...],   # one per HTTP call made
+        },
+      }
+
+    Raises:
+      EDIAPIError: if any of the underlying HTTP calls fails.
+    """
+    # No date filter -> single call, fromexdate omitted entirely.
+    if not from_date:
+        records, info = _fetch_one(isin, token, operational_mic, None, None, timeout)
+        return {
+            "records": normalize_dates(records),
+            "meta": {
+                "isin":           isin,
+                "record_count":   info["record_count"],
+                "total_records":  info["total_records"],
+                "rate_limit":     info["rate_limit"],
+                "rate_remaining": info["rate_remaining"],
+                "calls":          [info],
+            },
+        }
+
+    # Date filter set -> two parallel calls.
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        f_ex   = executor.submit(_fetch_one, isin, token, operational_mic, from_date, "fromexdate", timeout)
+        f_full = executor.submit(_fetch_one, isin, token, operational_mic, from_date, "fromdate",   timeout)
+        # .result() re-raises any EDIAPIError from the worker threads.
+        records_ex,   info_ex   = f_ex.result()
+        records_full, info_full = f_full.result()
+
+    # Merge with dedup by (eventid, optionid, operationalmic).
+    # Order: fromexdate results first (ex-date events), then fromdate-only extras.
+    seen, merged = set(), []
+    for r in records_ex + records_full:
+        key = (r.get("eventid"), r.get("optionid"), r.get("operationalmic"))
+        if key not in seen:
+            seen.add(key)
+            merged.append(r)
+
     return {
-        "records": normalize_dates(raw_records),
+        "records": normalize_dates(merged),
         "meta": {
             "isin":           isin,
-            "record_count":   response.headers.get("X-Record-Count",       "–"),
-            "total_records":  response.headers.get("X-Total-Records",      "–"),
-            "rate_limit":     response.headers.get("X-Ratelimit-Limit",    "–"),
-            "rate_remaining": response.headers.get("X-Ratelimit-Remaining","–"),
-            # Debug info (always populated, app decides whether to display)
-            "url":            url,
-            "status_code":    response.status_code,
-            "body_preview":   response.text[:500] if response.text else "",
-            "headers":        dict(response.headers),
+            "record_count":   str(len(merged)),
+            "total_records":  _max_str_int(info_ex["total_records"], info_full["total_records"]),
+            "rate_limit":     info_full["rate_limit"],
+            "rate_remaining": _min_str_int(info_ex["rate_remaining"], info_full["rate_remaining"]),
+            "calls":          [info_ex, info_full],
         },
     }
