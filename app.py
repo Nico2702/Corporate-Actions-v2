@@ -159,10 +159,7 @@ if fetch_btn:
             st.session_state["edi_rate_limit"]  = result["meta"]["rate_limit"]
             st.session_state["edi_isin"]        = result["meta"]["isin"]
             st.session_state["edi_debug"]       = {
-                "url":          result["meta"]["url"],
-                "status_code":  result["meta"]["status_code"],
-                "body_preview": result["meta"]["body_preview"],
-                "headers":      result["meta"]["headers"],
+                "calls": result["meta"]["calls"],
             }
         except edi.EDIAPIError as e:
             st.error(f"❌ {e}")
@@ -189,19 +186,27 @@ st.divider()
 
 # ── Debug Panel ───────────────────────────────────────────────────────────────
 if debug_mode and "edi_debug" in st.session_state:
-    dbg = st.session_state["edi_debug"]
-    with st.expander("🔧 Debug Info — letzter API-Call", expanded=True):
-        st.markdown(f"**Status Code:** `{dbg['status_code']}`")
-        st.markdown(f"**URL:**")
-        st.code(dbg["url"], language="text")
-        st.markdown(f"**Records in session_state:** {len(records)}")
-        st.markdown("**Response Headers:**")
-        st.json(dbg["headers"])
-        if dbg["body_preview"]:
-            st.markdown("**Response Body (erste 500 Zeichen):**")
-            st.code(dbg["body_preview"], language="json")
-        else:
-            st.info("Response Body ist leer (kommt typischerweise bei Status 204).")
+    calls = st.session_state["edi_debug"].get("calls", [])
+    title = f"🔧 Debug Info — {len(calls)} API-Call{'s' if len(calls) != 1 else ''}"
+    with st.expander(title, expanded=True):
+        st.markdown(f"**Records nach Merge & Dedup:** {len(records)}")
+        for i, c in enumerate(calls, 1):
+            st.markdown(f"---")
+            st.markdown(f"### Call {i}: `{c['label']}`  →  Status `{c['status_code']}`")
+            st.markdown("**URL:**")
+            st.code(c["url"], language="text")
+            cols = st.columns(4)
+            cols[0].metric("X-Record-Count",       c["record_count"])
+            cols[1].metric("X-Total-Records",      c["total_records"])
+            cols[2].metric("X-Ratelimit-Limit",    c["rate_limit"])
+            cols[3].metric("X-Ratelimit-Remaining", c["rate_remaining"])
+            st.markdown("**Response Headers:**")
+            st.json(c["headers"])
+            if c["body_preview"]:
+                st.markdown("**Response Body (erste 500 Zeichen):**")
+                st.code(c["body_preview"], language="json")
+            else:
+                st.info("Response Body ist leer (typisch bei Status 204).")
     st.divider()
 
 if not records:
