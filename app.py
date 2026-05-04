@@ -70,16 +70,11 @@ with st.sidebar:
     st.markdown("### 🔍 Query Parameters")
     isin   = st.text_input("ISIN", placeholder="e.g. CH1256740924")
     op_mic = st.text_input("Operational MIC", placeholder="e.g. XSWX")
-    use_dates = st.checkbox("Filter by Ex-Date range", value=False)
+    use_dates = st.checkbox("Filter by Ex-Date (from)", value=False)
     if use_dates:
-        col1, col2 = st.columns(2)
-        with col1:
-            from_date = st.date_input("From Ex-Date", value=date.today() - timedelta(days=365))
-        with col2:
-            to_date   = st.date_input("To Ex-Date",   value=date.today() + timedelta(days=180))
+        from_date = st.date_input("From Ex-Date", value=date.today() - timedelta(days=365))
     else:
         from_date = None
-        to_date   = None
     st.divider()
     st.markdown("### 🎛️ Display Filters")
     show_ignored = st.checkbox("Show ignored events (WAR)", value=False)
@@ -154,7 +149,6 @@ if fetch_btn:
                 token=api_key,
                 operational_mic=op_mic or None,
                 from_date=from_date,
-                to_date=to_date,
             )
             st.session_state["edi_records"]     = result["records"]
             st.session_state["edi_rec_count"]   = result["meta"]["record_count"]
