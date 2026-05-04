@@ -73,7 +73,8 @@ with st.sidebar:
     factset_key = st.text_input("FactSet API Key", type="password", placeholder="(optional, FactSet integration in progress)")
     st.divider()
     st.markdown("### 🔍 Query Parameters")
-    isin   = st.text_input("ISIN", placeholder="e.g. CH1256740924")
+    isin   = st.text_input("ISIN", placeholder="e.g. CH1256740924", help="Used by EDI")
+    ticker = st.text_input("Ticker (FactSet)", placeholder="e.g. AAPL-NAS", help="FactSet ticker-exchange format")
     op_mic = st.text_input("Operational MIC", placeholder="e.g. XSWX")
     use_dates = st.checkbox("Filter From Date", value=True)
     if use_dates:
@@ -137,11 +138,14 @@ if not fetch_btn and "edi_records" not in st.session_state and "factset_records"
     st.info("👈 Configure query parameters in the sidebar and click **Fetch Corporate Actions**.")
     st.stop()
 
-if fetch_btn and not isin:
-    st.error("⚠️ Please enter an ISIN.")
-    st.stop()
 if fetch_btn and not edi_key and not factset_key:
     st.error("⚠️ Please enter at least one API Key (EDI or FactSet).")
+    st.stop()
+if fetch_btn and edi_key and not isin:
+    st.error("⚠️ EDI is enabled — please enter an ISIN.")
+    st.stop()
+if fetch_btn and factset_key and not ticker:
+    st.error("⚠️ FactSet is enabled — please enter a Ticker (e.g. AAPL-NAS).")
     st.stop()
 
 # ── API Call: parallel fetch of both providers ────────────────────────────────
@@ -163,10 +167,11 @@ def _fetch_edi():
 def _fetch_factset():
     if not factset_key:
         return None, "No FactSet API key provided."
+    if not ticker:
+        return None, "No FactSet Ticker provided (e.g. AAPL-NAS)."
     try:
         result = factset.fetch_records(
-            isin=isin, token=factset_key,
-            operational_mic=op_mic or None,
+            ticker=ticker, token=factset_key,
             from_date=from_date,
         )
         return result, None
