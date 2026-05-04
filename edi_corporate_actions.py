@@ -1062,5 +1062,10 @@ def fetch_records(
             "total_records":  response.headers.get("X-Total-Records",      "–"),
             "rate_limit":     response.headers.get("X-Ratelimit-Limit",    "–"),
             "rate_remaining": response.headers.get("X-Ratelimit-Remaining","–"),
+            # Debug info (always populated, app decides whether to display)
+            "url":            url,
+            "status_code":    response.status_code,
+            "body_preview":   response.text[:500] if response.text else "",
+            "headers":        dict(response.headers),
         },
     }
