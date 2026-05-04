@@ -621,10 +621,25 @@ def render_factset_tab():
         st.info("FactSet noch nicht geladen — Fetch in der Sidebar starten.")
         return
 
-    # Placeholder for when FactSet fetch_records is implemented.
     records = st.session_state["factset_records"]
+    meta    = st.session_state.get("factset_meta", {})
+
     st.success(f"FactSet: {len(records)} records loaded.")
-    st.info("Display logic for FactSet records — to be implemented analog to EDI.")
+    st.caption("Pipeline (classify / merge / build_rows) wird noch gebaut. "
+               "Hier siehst du die rohen FactSet-Records als JSON — "
+               "klapp einen Eintrag auf, um die Felder zu inspizieren.")
+
+    # Header metrics (mirrors EDI tab look)
+    cols = st.columns(4)
+    cols[0].metric("Ticker",          meta.get("isin", "–"))
+    cols[1].metric("Records Returned", meta.get("record_count", "–"))
+    cols[2].metric("Rate Limit",       meta.get("rate_limit", "–"))
+    cols[3].metric("Rate Remaining",   meta.get("rate_remaining", "–"))
+    st.divider()
+
+    # Raw JSON view — collapsible, scrollable
+    st.markdown("### 📄 Raw FactSet Records")
+    st.json(records, expanded=True)
 
 
 # ── Validation Tab Renderer ──────────────────────────────────────────────────
