@@ -1000,7 +1000,6 @@ def fetch_records(
     token: str,
     operational_mic: str | None = None,
     from_date: date | None = None,
-    to_date: date | None = None,
     timeout: int = 30,
 ) -> dict:
     """
@@ -1012,7 +1011,6 @@ def fetch_records(
       token:           Bearer token for the `authorization` header (required).
       operational_mic: Optional MIC filter (e.g. "XSWX").
       from_date:       Optional ex-date lower bound.
-      to_date:         Optional ex-date upper bound.
       timeout:         HTTP timeout in seconds.
 
     Returns:
@@ -1035,7 +1033,6 @@ def fetch_records(
         f"?format=JSON&ISIN={isin}"
         f"{'&operationalMic=' + operational_mic if operational_mic else ''}"
         f"{'&fromexdate=' + from_date.strftime('%Y-%m-%d') if from_date else ''}"
-        f"{'&toexdate='   + to_date.strftime('%Y-%m-%d')   if to_date   else ''}"
     )
 
     try:
