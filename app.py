@@ -270,8 +270,9 @@ if fetch_btn:
             edi_result, edi_error = f_edi.result()
             fs_result,  fs_error  = f_fs.result()
 
-        # Remember the user-supplied ISIN so the FactSet tab can stamp it on rows
+        # Remember the user-supplied ISIN + MIC so the FactSet tab can stamp them on rows
         st.session_state["query_isin"] = isin
+        st.session_state["query_mic"]  = op_mic
 
         # Store EDI
         if edi_result is not None:
@@ -654,6 +655,7 @@ def render_factset_tab():
     raw_records = st.session_state["factset_records"]
     meta        = st.session_state.get("factset_meta", {})
     query_isin  = st.session_state.get("query_isin", "")
+    query_mic   = st.session_state.get("query_mic", "")
 
     # ── Header metrics (mirrors EDI tab) ──────────────────────────────────────
     cols = st.columns(4)
@@ -671,7 +673,7 @@ def render_factset_tab():
     normalized = factset.normalize_dates(raw_records)
     deduped    = factset.deduplicate(normalized)
     processed  = factset.merge_events(deduped)
-    rows       = factset.build_rows(processed, isin=query_isin)
+    rows       = factset.build_rows(processed, isin=query_isin, mic=query_mic)
     df         = pd.DataFrame(rows)
 
     # Sort by Ex-Date descending (newest first; empty exdt goes to the bottom)
