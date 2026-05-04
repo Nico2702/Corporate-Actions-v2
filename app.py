@@ -686,6 +686,7 @@ def render_factset_tab():
         "Stock_Div_Pct", "Stock_Div_Ratio",
         "Split_Ratio", "Split_Terms",
         "Sub_Price", "Sub_Currency", "Sub_Ratio",
+        "ECA_Stock_Ratio", "ECA_Stock_Terms",
         "eventid", "isin", "fsymId",
     ]
     display_cols = [c for c in display_cols if c in df_display.columns]
