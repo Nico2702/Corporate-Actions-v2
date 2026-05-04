@@ -190,6 +190,9 @@ if fetch_btn:
             edi_result, edi_error = f_edi.result()
             fs_result,  fs_error  = f_fs.result()
 
+        # Remember the user-supplied ISIN so the FactSet tab can stamp it on rows
+        st.session_state["query_isin"] = isin
+
         # Store EDI
         if edi_result is not None:
             st.session_state["edi_records"]     = edi_result["records"]
@@ -614,22 +617,16 @@ def render_edi_tab():
 def render_factset_tab():
     if "factset_error" in st.session_state:
         st.error(f"❌ FactSet: {st.session_state['factset_error']}")
-        st.info("FactSet integration is currently a skeleton — to be implemented "
-                "once API docs and a sample response are available.")
         return
     if "factset_records" not in st.session_state:
         st.info("FactSet noch nicht geladen — Fetch in der Sidebar starten.")
         return
 
-    records = st.session_state["factset_records"]
-    meta    = st.session_state.get("factset_meta", {})
+    raw_records = st.session_state["factset_records"]
+    meta        = st.session_state.get("factset_meta", {})
+    query_isin  = st.session_state.get("query_isin", "")
 
-    st.success(f"FactSet: {len(records)} records loaded.")
-    st.caption("Pipeline (classify / merge / build_rows) wird noch gebaut. "
-               "Hier siehst du die rohen FactSet-Records als JSON — "
-               "klapp einen Eintrag auf, um die Felder zu inspizieren.")
-
-    # Header metrics (mirrors EDI tab look)
+    # ── Header metrics (mirrors EDI tab) ──────────────────────────────────────
     cols = st.columns(4)
     cols[0].metric("Ticker",          meta.get("isin", "–"))
     cols[1].metric("Records Returned", meta.get("record_count", "–"))
@@ -637,9 +634,76 @@ def render_factset_tab():
     cols[3].metric("Rate Remaining",   meta.get("rate_remaining", "–"))
     st.divider()
 
-    # Raw JSON view — collapsible, scrollable
-    st.markdown("### 📄 Raw FactSet Records")
-    st.json(records, expanded=True)
+    if not raw_records:
+        st.warning("No FactSet corporate action records found.")
+        return
+
+    # ── Pipeline ──────────────────────────────────────────────────────────────
+    normalized = factset.normalize_dates(raw_records)
+    deduped    = factset.deduplicate(normalized)
+    processed  = factset.merge_events(deduped)
+    rows       = factset.build_rows(processed, isin=query_isin)
+    df         = pd.DataFrame(rows)
+
+    # Apply event-type filter (shared with EDI tab via the sidebar)
+    if event_type_filter:
+        df = df[df["Event_Type"].isin(event_type_filter)]
+
+    if df.empty:
+        st.warning("No FactSet events match the current filters.")
+        return
+
+    # ── Summary badges (event-type counts) ────────────────────────────────────
+    st.subheader(f"📋 {len(df)} FactSet Events")
+    type_counts = df["Event_Type"].value_counts()
+    badge_cols = st.columns(min(len(type_counts), 7))
+    for i, (etype, cnt) in enumerate(type_counts.items()):
+        badge_cls = EVENT_TYPE_COLORS.get(etype, "badge-other")
+        badge_cols[i % len(badge_cols)].markdown(
+            f'<div style="text-align:center">'
+            f'<span class="event-badge {badge_cls}">{etype}</span>'
+            f'<br><b style="font-size:1.5rem">{cnt}</b></div>',
+            unsafe_allow_html=True
+        )
+    st.divider()
+
+    # ── Classified events table ───────────────────────────────────────────────
+    hide_other = st.toggle("Hide 'Other' events", value=True, key="fs_hide_other")
+    df_display = df[df["Event_Type"] != "Other"] if hide_other else df
+
+    display_cols = [
+        "Event_Type", "Subtype", "Evt_Status", "eventcd",
+        "exdt", "paydt", "recorddt",
+        "Dividend_Amount", "Tax_Marker", "Dividend_Currency",
+        "Stock_Div_Pct", "Stock_Div_Ratio",
+        "Split_Ratio", "Split_Terms",
+        "Sub_Price", "Sub_Currency", "Sub_Ratio",
+        "eventid", "isin", "fsymId",
+    ]
+    display_cols = [c for c in display_cols if c in df_display.columns]
+
+    st.dataframe(
+        df_display[display_cols],
+        use_container_width=True,
+        height=400,
+        column_config={
+            "Event_Type":        st.column_config.TextColumn("Event Type", width=160),
+            "Subtype":           st.column_config.TextColumn("Subtype", width=120),
+            "Evt_Status":        st.column_config.TextColumn("Status", width=90),
+            "exdt":              st.column_config.DateColumn("Ex-Date"),
+            "paydt":              st.column_config.DateColumn("Pay Date"),
+            "recorddt":          st.column_config.DateColumn("Record Date"),
+            "Dividend_Amount":   st.column_config.NumberColumn("Div Amount", format="%.4f"),
+            "Tax_Marker":        st.column_config.TextColumn("Tax", width=70),
+            "Dividend_Currency": st.column_config.TextColumn("Ccy", width=60),
+            "Sub_Price":         st.column_config.NumberColumn("Sub Price", format="%.4f"),
+            "fsymId":            st.column_config.TextColumn("FactSet fsymId", width=120),
+        },
+    )
+
+    # ── Raw JSON expander (for inspection) ────────────────────────────────────
+    with st.expander("📄 Raw FactSet Records (JSON)", expanded=False):
+        st.json(raw_records, expanded=False)
 
 
 # ── Validation Tab Renderer ──────────────────────────────────────────────────
