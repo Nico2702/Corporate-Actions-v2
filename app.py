@@ -281,6 +281,10 @@ def render_edi_tab():
     rows      = edi.build_rows(processed)
     df        = pd.DataFrame(rows)
 
+    # Sort by Ex-Date descending (newest first; empty exdt goes to the bottom)
+    if "exdt" in df.columns:
+        df = df.sort_values("exdt", ascending=False).reset_index(drop=True)
+
     if event_type_filter:
         df = df[df["Event_Type"].isin(event_type_filter)]
 
@@ -644,6 +648,10 @@ def render_factset_tab():
     processed  = factset.merge_events(deduped)
     rows       = factset.build_rows(processed, isin=query_isin)
     df         = pd.DataFrame(rows)
+
+    # Sort by Ex-Date descending (newest first; empty exdt goes to the bottom)
+    if "exdt" in df.columns:
+        df = df.sort_values("exdt", ascending=False).reset_index(drop=True)
 
     # Apply event-type filter (shared with EDI tab via the sidebar)
     if event_type_filter:
