@@ -212,6 +212,34 @@ def classify_event(row: dict) -> dict:
         else:
             # spec_flg = 0 OR null → Cash Dividend per spec
             result["event_type"] = "Cash Dividend"
+        # Subtype: certain divTypeCodes carry semantic meaning (mirrors EDI conventions)
+        div_type = row.get("divTypeCode")
+        if div_type == 1:
+            result["event_type"] = "Cash Dividend"
+        elif div_type == 2:
+            result["event_type"] = "Special Dividend"
+        elif div_type == 4:
+            result["event_type"] = "Cash Dividend"
+            result["subtype"]    = "Interest on Capital"
+        elif div_type == 5:
+            result["event_type"] = "Special Dividend"
+            result["subtype"]    = "Liquidation"
+        elif div_type == 10:
+            result["event_type"] = "Special Dividend"
+            result["subtype"]    = "Short-Term Capital Gains"
+        elif div_type == 11:
+            result["event_type"] = "Special Dividend"
+            result["subtype"]    = "Long-Term Capital Gains"
+        elif div_type == 12:
+            result["event_type"] = "Special Dividend"
+            result["subtype"]    = "Medium-Term Capital Gains"
+        elif div_type == 19:
+            result["subtype"] = "Property Income Distribution"
+        elif div_type == 21:
+            result["subtype"] = "Return of Capital"
+        # divTypeCode=0 → dividend is cancelled (overrides any dividendStatus from feed)
+        if div_type == 0:
+            result["status_override"] = "Cancelled"
         return result
 
     # ── Stock Dividend ────────────────────────────────────────────────────────
@@ -262,14 +290,18 @@ def _fmt_terms(new, old) -> str:
         return ""
 
 
-def build_rows(processed_records, isin: str = ""):
+def build_rows(processed_records, isin: str = "", mic: str = ""):
     """Step 5 — build standardized output rows matching EDI's column schema.
 
     Args:
       processed_records: deduped + merged FactSet records.
       isin:              user-supplied ISIN from the sidebar — copied into
                          each row so the Validation tab can match against EDI.
+      mic:               user-supplied operational MIC from the sidebar —
+                         needed for market-specific tax rules (e.g. BVMF for
+                         Brazilian Interest on Capital WHT).
     """
+    mic = (mic or "").upper()
     rows = []
     for r in processed_records:
         cl       = classify_event(r)
@@ -281,7 +313,7 @@ def build_rows(processed_records, isin: str = ""):
             # Core
             "Event_Type":   cl["event_type"],
             "Subtype":      cl["subtype"],
-            "Evt_Status":   r.get("dividendStatus") or "",
+            "Evt_Status":   cl.get("status_override") or r.get("dividendStatus") or "",
             "eventid":      r.get("eventId", ""),
             "optionid":     "1",     # FactSet has no optionid concept
             "eventcd":      eventcd,
@@ -291,7 +323,7 @@ def build_rows(processed_records, isin: str = ""):
             # Identifiers
             "isin":           isin,                    # from user input
             "issuername":     "",                       # not in FactSet response
-            "operationalmic": "",                       # not in FactSet response
+            "operationalmic": mic,                      # from user input
             "fsymId":         r.get("fsymId", ""),     # FactSet-specific extra
 
             # Dates
@@ -351,6 +383,12 @@ def build_rows(processed_records, isin: str = ""):
             row["Dividend_Currency"] = r.get("declaredCurrency") or ""
             # Spec: divTypeCode=21 → Tax_Marker=NET (else GROSS)
             row["Tax_Marker"] = "NET" if div_type == 21 else "GROSS"
+            # divTypeCode=19 → Property Income Distribution: 20% UK REIT WHT (mirrors EDI)
+            if div_type == 19:
+                row["Adjusted_WHT"] = "20%"
+            # divTypeCode=4 → Interest on Capital: 17.5% BR WHT (only for BVMF listings)
+            elif div_type == 4 and mic == "BVMF":
+                row["Adjusted_WHT"] = "17.5%"
 
         # ── Stock Dividend (DVS/DVSS use distPct directly) ────────────────────
         if eventcd in STOCK_DIV_PCT:
