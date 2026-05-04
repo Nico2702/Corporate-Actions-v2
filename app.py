@@ -77,7 +77,6 @@ with st.sidebar:
         from_date = None
     st.divider()
     st.markdown("### 🎛️ Display Filters")
-    show_ignored = st.checkbox("Show ignored events (WAR)", value=False)
     event_type_filter = st.multiselect(
         "Filter by Event Type",
         options=["Cash Dividend", "Special Dividend", "Stock Dividend",
@@ -216,7 +215,7 @@ if not records:
 # ── Process ───────────────────────────────────────────────────────────────────
 deduped   = edi.deduplicate(records)
 processed = edi.merge_events(deduped)
-rows      = edi.build_rows(processed, show_ignored)
+rows      = edi.build_rows(processed)
 df        = pd.DataFrame(rows)
 
 if event_type_filter:
