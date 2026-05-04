@@ -709,7 +709,7 @@ def render_factset_tab():
     display_cols = [
         "Event_Type", "Subtype", "Evt_Status", "eventcd",
         "exdt", "paydt", "recorddt",
-        "Dividend_Amount", "Tax_Marker", "Dividend_Currency",
+        "Dividend_Amount", "Tax_Marker", "Adjusted_WHT", "Dividend_Currency",
         "Stock_Div_Pct", "Stock_Div_Ratio",
         "Split_Ratio", "Split_Terms",
         "Sub_Price", "Sub_Currency", "Sub_Ratio",
