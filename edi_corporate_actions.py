@@ -176,7 +176,7 @@ def classify_event(row: dict) -> dict:
     # ── DMRGR (Spin-Off / Demerger) ───────────────────────────────────────────
     if eventcd == "DMRGR":
         result["event_type"]             = "Spin-Off"
-        result["ma_subtype"]             = "Demerger"
+        result["ma_subtype"]             = ""
         result["ma_deal_type"]           = "Stock"
         result["ma_mandatory_voluntary"] = row.get("mandvoluflag") or ""
         result["ma_offeror_ticker"]      = row.get("outbbgcompticker") or ""
@@ -212,7 +212,7 @@ def classify_event(row: dict) -> dict:
     # ── DIST (Stock Distribution — e.g. Reverse Morris Trust distribution) ────
     if eventcd == "DIST":
         result["event_type"]             = "Stock Distribution"
-        result["ma_subtype"]             = "Share Distribution"
+        result["ma_subtype"]             = ""
         result["ma_deal_type"]           = "Stock"
         result["ma_mandatory_voluntary"] = row.get("mandvoluflag") or ""
         result["ma_offeror_ticker"]      = row.get("outbbgcompticker") or ""
@@ -403,15 +403,15 @@ def classify_event(row: dict) -> dict:
         related = (row.get("relatedeventcd") or "").upper().strip()
         if related == "MRGR":
             result["event_type"] = "Merger & Acquisition"
-            result["ma_subtype"] = "Announcement"
+            result["ma_subtype"] = ""
             result["ma_mandatory_voluntary"] = row.get("mandvoluflag") or ""
         elif related == "DMRGR":
             result["event_type"] = "Spin-Off"
-            result["ma_subtype"] = "Announcement"
+            result["ma_subtype"] = ""
             result["ma_mandatory_voluntary"] = row.get("mandvoluflag") or ""
         elif related == "TKOVR":
             result["event_type"] = "Merger & Acquisition"
-            result["ma_subtype"] = "Announcement"
+            result["ma_subtype"] = ""
             result["ma_mandatory_voluntary"] = row.get("mandvoluflag") or ""
         return result
 
@@ -848,7 +848,7 @@ def build_rows(processed_records):
             label_map = {"C": "Cash", "S": "Stock", "B": "Cash & Stock"}
             deal_type_label = " + ".join(label_map.get(p, p) for p in paytypes)
             row["Event_Type"]        = "Merger & Acquisition"
-            row["Subtype"]           = "Election" if len(paytypes) >= 2 else deal_type_label
+            row["Subtype"]           = ""
             row["Deal_Type"]         = deal_type_label
             row["MA_Offeror"]        = r.get("offerorname", "")
             row["MA_Hostile"]        = r.get("hostile", "")
