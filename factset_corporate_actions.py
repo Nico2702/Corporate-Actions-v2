@@ -319,7 +319,12 @@ def classify_event(row: dict, mic: str = "") -> dict:
         elif div_type == 19:
             result["subtype"] = "Property Income Distribution"
         elif div_type == 21:
-            result["subtype"] = "Return of Capital"
+            # Brazil-specific: BVMF code 21 is Interest on Capital, NOT Return of Capital
+            if mic.upper() == "BVMF":
+                result["event_type"] = "Cash Dividend"
+                result["subtype"]    = "Interest on Capital"
+            else:
+                result["subtype"]    = "Return of Capital"
         # divTypeCode=0 → dividend is cancelled (overrides any dividendStatus from feed)
         if div_type == 0:
             result["status_override"] = "Cancelled"
@@ -474,13 +479,17 @@ def build_rows(processed_records, isin: str = "", mic: str = ""):
             row["Dividend_Amount"]          = r.get("amtGrossDecUnadj") or ""
             row["Dividend_Amount_Adjusted"] = r.get("_amtGrossDecAdjusted") or ""
             row["Dividend_Currency"]        = r.get("declaredCurrency") or ""
-            # Spec: divTypeCode=21 → Tax_Marker=NET (else GROSS)
-            row["Tax_Marker"] = "NET" if div_type == 21 else "GROSS"
+            # Tax_Marker: NET only when divTypeCode=21 AND it's a real Return of
+            # Capital — i.e. not on BVMF, where 21 means Interest on Capital (GROSS).
+            if div_type == 21 and mic != "BVMF":
+                row["Tax_Marker"] = "NET"
+            else:
+                row["Tax_Marker"] = "GROSS"
             # divTypeCode=19 → Property Income Distribution: 20% UK REIT WHT (mirrors EDI)
             if div_type == 19:
                 row["Adjusted_WHT"] = "20%"
-            # divTypeCode=4 → Interest on Capital: 17.5% BR WHT (only for BVMF listings)
-            elif div_type == 4 and mic == "BVMF":
+            # BVMF + Interest on Capital (code 4 OR code 21) → 17.5% BR WHT (mirrors EDI)
+            elif mic == "BVMF" and div_type in (4, 21):
                 row["Adjusted_WHT"] = "17.5%"
 
         # ── Stock Dividend / US Forward Split branch ─────────────────────────
