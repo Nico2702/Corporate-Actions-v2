@@ -907,6 +907,7 @@ def render_validation_tab():
             "Status":     f"{validation.status_icon(r['status'])} {validation.status_label(r['status'])}",
             "Ex_Date":    r["exdt"],
             "Event_Type": r["event_type"],
+            "Subtype":    r["subtype"] or "—",
             "ISIN-MIC":   r["isin_mic"],
             "Differences": r["diff_summary"],
         })
@@ -919,6 +920,7 @@ def render_validation_tab():
             "Status":      st.column_config.TextColumn("Status",     width=130),
             "Ex_Date":     st.column_config.DateColumn("Ex-Date"),
             "Event_Type":  st.column_config.TextColumn("Event Type", width=160),
+            "Subtype":     st.column_config.TextColumn("Subtype",    width=200),
             "ISIN-MIC":    st.column_config.TextColumn("ISIN-MIC",   width=180),
             "Differences": st.column_config.TextColumn("Differences", width=600),
         },
@@ -929,16 +931,19 @@ def render_validation_tab():
     st.markdown("### 🔎 Detail View")
 
     detail_options = [
-        f"{validation.status_icon(r['status'])} {r['exdt']} | {r['event_type']} | {r['isin_mic']}"
+        f"{validation.status_icon(r['status'])} {r['exdt']} | {r['event_type']}"
+        + (f" / {r['subtype']}" if r['subtype'] else "")
+        + f" | {r['isin_mic']}"
         for r in filtered
     ]
     selected = st.selectbox("Select event for detailed comparison", detail_options, key="val_select")
     sel_idx = detail_options.index(selected)
     sel = filtered[sel_idx]
 
+    subtype_part = f" / {sel['subtype']}" if sel['subtype'] else ""
     st.markdown(f"**Status:** {validation.status_icon(sel['status'])} {validation.status_label(sel['status'])} &nbsp;&nbsp;|&nbsp;&nbsp; "
                 f"**Ex-Date:** {sel['exdt']} &nbsp;&nbsp;|&nbsp;&nbsp; "
-                f"**Event:** {sel['event_type']} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                f"**Event:** {sel['event_type']}{subtype_part} &nbsp;&nbsp;|&nbsp;&nbsp; "
                 f"**ISIN-MIC:** `{sel['isin_mic']}`")
 
     if sel["status"] in ("only_edi", "only_factset"):
