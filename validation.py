@@ -55,17 +55,39 @@ def _norm(v):
         return s.lower()
 
 
+# Subtypes that describe dividend frequency only (not semantic classification).
+# These are normalized to empty for match-key purposes so EDI's "Interim" etc.
+# don't fail to match a FactSet record without a frequency subtype. The
+# original value is preserved in the display row.
+FREQUENCY_SUBTYPES = {
+    "interim",
+    "final",
+    "annual",
+    "variable",
+}
+
+
+def _norm_subtype_for_key(subtype: str) -> str:
+    """Treat frequency-only subtypes as empty when building the match key."""
+    s = (subtype or "").strip()
+    if s.lower() in FREQUENCY_SUBTYPES:
+        return ""
+    return s
+
+
 def _key(row: dict) -> tuple:
     """Returns the match key (isin_mic, exdt, event_type, subtype) for a row.
 
-    Subtype is part of the key only when non-empty — this allows multiple
-    Cash Dividends on the same ex-date (e.g. Brazilian Interest on Capital
-    + Ordinary Dividend) to be matched as distinct events.
+    Subtype is part of the key only when non-empty AND not a frequency
+    indicator — this allows multiple Cash Dividends on the same ex-date
+    (e.g. Brazilian Interest on Capital + Ordinary Dividend) to be matched
+    as distinct events, while keeping frequency-only subtypes (Interim,
+    Final, ...) from breaking matches with sources that don't carry them.
     """
     isin = (row.get("isin") or "").strip()
     mic  = (row.get("operationalmic") or "").strip()
     isin_mic = f"{isin}-{mic}" if mic else isin
-    subtype  = (row.get("Subtype") or "").strip()
+    subtype  = _norm_subtype_for_key(row.get("Subtype") or "")
     return (isin_mic, row.get("exdt") or "", row.get("Event_Type") or "", subtype)
 
 
@@ -127,9 +149,18 @@ def validate(edi_rows, factset_rows) -> list[dict]:
     results = []
 
     for k in sorted(all_keys, key=lambda x: (x[1] or "", x[0], x[2], x[3]), reverse=True):
-        isin_mic, exdt, etype, subtype = k
+        isin_mic, exdt, etype, _normalized_subtype = k
         edi_row = edi_by_key.get(k)
         fs_row  = fs_by_key.get(k)
+
+        # For display, prefer the original (non-normalized) subtype from
+        # whichever source has the row. EDI takes precedence so the user sees
+        # the frequency indicator like "Interim" if EDI provides one.
+        display_subtype = ""
+        if edi_row:
+            display_subtype = (edi_row.get("Subtype") or "").strip()
+        if not display_subtype and fs_row:
+            display_subtype = (fs_row.get("Subtype") or "").strip()
 
         if edi_row and fs_row:
             fields = _compare_fields(edi_row, fs_row)
@@ -153,7 +184,7 @@ def validate(edi_rows, factset_rows) -> list[dict]:
             "isin_mic":     isin_mic,
             "exdt":         exdt,
             "event_type":   etype,
-            "subtype":      subtype,
+            "subtype":      display_subtype,
             "edi_row":      edi_row,
             "factset_row":  fs_row,
             "fields":       fields,
