@@ -26,8 +26,10 @@ REQUIRED_FIELDS = (
 # Display-only fields (shown in detail view, never trigger a fail).
 # Note: Subtype is NOT here — it's part of the match key (so different
 # subtypes match as separate events, e.g. Interest on Capital vs Ordinary).
+# Note: Evt_Status is NOT here either — the cancellation status is already
+# reflected in the row-level status (✅/❌/⚠️), so showing it again as a
+# field-level row would be redundant.
 DISPLAY_FIELDS = (
-    "Evt_Status",
     "Adjusted_WHT",
     "Frankdiv",
     "CFI",
