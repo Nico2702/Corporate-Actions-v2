@@ -345,7 +345,7 @@ def classify_event(row: dict, mic: str = "") -> dict:
     # ── Stock Split ───────────────────────────────────────────────────────────
     if eventcd in SPLIT_CODES:
         result["event_type"] = "Stock Split"
-        result["subtype"]    = "Reverse" if eventcd in SPLIT_REV_CODES else "Forward"
+        result["subtype"]    = "Reverse Stock Split" if eventcd in SPLIT_REV_CODES else "Forward Stock Split"
         return result
 
     # ── Rights Issue ──────────────────────────────────────────────────────────
