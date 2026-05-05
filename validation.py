@@ -12,7 +12,7 @@ positives from float artifacts. Empty/None values are treated as equal.
 """
 
 # Event-types currently included in the validation scope.
-SCOPED_TYPES = ("Cash Dividend", "Special Dividend", "Stock Dividend")
+SCOPED_TYPES = ("Cash Dividend", "Special Dividend", "Stock Dividend", "Stock Split")
 
 # Required fields per event type. Mismatches are flagged.
 REQUIRED_FIELDS_BY_TYPE = {
@@ -35,10 +35,16 @@ REQUIRED_FIELDS_BY_TYPE = {
         "Stock_Div_Pct",
         "exdt",
     ),
+    "Stock Split": (
+        "Event_Type",
+        "Split_Ratio",
+        "exdt",
+    ),
 }
 
 # Event types where Subtype is part of the match key.
 # Stock Dividend has no semantic subtype — match by ISIN-MIC + Ex_Date + Event_Type only.
+# Stock Split: Forward/Reverse can't co-exist on same day → also no subtype matching needed.
 TYPES_USING_SUBTYPE_IN_KEY = {"Cash Dividend", "Special Dividend"}
 
 # Display-only fields per event type. Shown in detail view, never trigger a fail.
@@ -59,6 +65,9 @@ DISPLAY_FIELDS_BY_TYPE = {
     ),
     "Stock Dividend": (
         "Stock_Div_Ratio",
+    ),
+    "Stock Split": (
+        "Split_Terms",
     ),
 }
 
