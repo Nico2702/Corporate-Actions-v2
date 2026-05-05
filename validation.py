@@ -12,30 +12,63 @@ positives from float artifacts. Empty/None values are treated as equal.
 """
 
 # Event-types currently included in the validation scope.
-SCOPED_TYPES = ("Cash Dividend", "Special Dividend")
+SCOPED_TYPES = ("Cash Dividend", "Special Dividend", "Stock Dividend")
 
-# Required fields (mismatches are flagged).
-REQUIRED_FIELDS = (
-    "Event_Type",
-    "Dividend_Amount",
-    "Dividend_Currency",
-    "Tax_Marker",
-    "exdt",                # = Ex_Date
-)
+# Required fields per event type. Mismatches are flagged.
+REQUIRED_FIELDS_BY_TYPE = {
+    "Cash Dividend": (
+        "Event_Type",
+        "Dividend_Amount",
+        "Dividend_Currency",
+        "Tax_Marker",
+        "exdt",
+    ),
+    "Special Dividend": (
+        "Event_Type",
+        "Dividend_Amount",
+        "Dividend_Currency",
+        "Tax_Marker",
+        "exdt",
+    ),
+    "Stock Dividend": (
+        "Event_Type",
+        "Stock_Div_Pct",
+        "exdt",
+    ),
+}
 
-# Display-only fields (shown in detail view, never trigger a fail).
-# Note: Subtype is NOT here — it's part of the match key (so different
-# subtypes match as separate events, e.g. Interest on Capital vs Ordinary).
-# Note: Evt_Status is NOT here either — the cancellation status is already
-# reflected in the row-level status (✅/❌/⚠️), so showing it again as a
-# field-level row would be redundant.
-DISPLAY_FIELDS = (
-    "Adjusted_WHT",
-    "Frankdiv",
-    "CFI",
-    "Depositary_Fee",
-    "Tax_Relief_Fee",
-)
+# Event types where Subtype is part of the match key.
+# Stock Dividend has no semantic subtype — match by ISIN-MIC + Ex_Date + Event_Type only.
+TYPES_USING_SUBTYPE_IN_KEY = {"Cash Dividend", "Special Dividend"}
+
+# Display-only fields per event type. Shown in detail view, never trigger a fail.
+DISPLAY_FIELDS_BY_TYPE = {
+    "Cash Dividend": (
+        "Adjusted_WHT",
+        "Frankdiv",
+        "CFI",
+        "Depositary_Fee",
+        "Tax_Relief_Fee",
+    ),
+    "Special Dividend": (
+        "Adjusted_WHT",
+        "Frankdiv",
+        "CFI",
+        "Depositary_Fee",
+        "Tax_Relief_Fee",
+    ),
+    "Stock Dividend": (
+        "Stock_Div_Ratio",
+    ),
+}
+
+
+def _required_fields(event_type: str) -> tuple:
+    return REQUIRED_FIELDS_BY_TYPE.get(event_type, ())
+
+
+def _display_fields(event_type: str) -> tuple:
+    return DISPLAY_FIELDS_BY_TYPE.get(event_type, ())
 
 
 def _is_cancelled(row: dict) -> bool:
@@ -47,6 +80,7 @@ def _norm(v):
     """Normalize a value for comparison.
     - None / "" / "  " → None (treated as equal regardless of variant)
     - Numerics → float rounded to 6 decimals (for monetary fields)
+    - Percentage strings ("20%", "50.0000%") → numeric, %-sign stripped
     - Strings → trimmed and lowercased so 'GROSS' == ' gross '
     """
     if v is None:
@@ -56,9 +90,11 @@ def _norm(v):
     s = str(v).strip()
     if s == "":
         return None
-    # Try numeric coercion first — handles "0.44" vs "0.4400"
+    # Strip a trailing percent sign so "20%" == "20" == 20.0
+    s_no_pct = s.rstrip("%").strip() if s.endswith("%") else s
+    # Try numeric coercion first — handles "0.44" vs "0.4400" and "20%" vs "20.0"
     try:
-        return round(float(s), 6)
+        return round(float(s_no_pct), 6)
     except ValueError:
         return s.lower()
 
@@ -86,17 +122,24 @@ def _norm_subtype_for_key(subtype: str) -> str:
 def _key(row: dict) -> tuple:
     """Returns the match key (isin_mic, exdt, event_type, subtype) for a row.
 
-    Subtype is part of the key only when non-empty AND not a frequency
-    indicator — this allows multiple Cash Dividends on the same ex-date
-    (e.g. Brazilian Interest on Capital + Ordinary Dividend) to be matched
-    as distinct events, while keeping frequency-only subtypes (Interim,
-    Final, ...) from breaking matches with sources that don't carry them.
+    Subtype contributes to the key only for event types listed in
+    TYPES_USING_SUBTYPE_IN_KEY (Cash/Special Dividend) — and even then only
+    when non-empty AND not a frequency indicator. Stock Dividend ignores
+    Subtype entirely.
+
+    This lets multiple Cash Dividends on the same ex-date (e.g. Brazilian
+    Interest on Capital + Ordinary) match as distinct events, while keeping
+    Stock Dividend matching purely on ISIN-MIC + Ex_Date + Event_Type.
     """
     isin = (row.get("isin") or "").strip()
     mic  = (row.get("operationalmic") or "").strip()
     isin_mic = f"{isin}-{mic}" if mic else isin
-    subtype  = _norm_subtype_for_key(row.get("Subtype") or "")
-    return (isin_mic, row.get("exdt") or "", row.get("Event_Type") or "", subtype)
+    event_type = row.get("Event_Type") or ""
+    if event_type in TYPES_USING_SUBTYPE_IN_KEY:
+        subtype = _norm_subtype_for_key(row.get("Subtype") or "")
+    else:
+        subtype = ""
+    return (isin_mic, row.get("exdt") or "", event_type, subtype)
 
 
 def _filter_in_scope(rows):
@@ -113,9 +156,17 @@ def _filter_in_scope(rows):
 
 
 def _compare_fields(edi_row: dict, fs_row: dict) -> list[dict]:
-    """For a matched pair, return a list of field comparisons."""
+    """For a matched pair, return a list of field comparisons.
+
+    Required and Display fields depend on the event type. We use EDI's
+    Event_Type when available, otherwise FactSet's.
+    """
+    event_type = edi_row.get("Event_Type") or fs_row.get("Event_Type") or ""
+    required   = _required_fields(event_type)
+    display    = _display_fields(event_type)
+
     diffs = []
-    for f in REQUIRED_FIELDS + DISPLAY_FIELDS:
+    for f in required + display:
         edi_val = edi_row.get(f)
         fs_val  = fs_row.get(f)
         is_match = _norm(edi_val) == _norm(fs_val)
@@ -124,7 +175,7 @@ def _compare_fields(edi_row: dict, fs_row: dict) -> list[dict]:
             "edi":        edi_val if edi_val not in (None, "") else "",
             "factset":    fs_val  if fs_val  not in (None, "") else "",
             "match":      is_match,
-            "required":   f in REQUIRED_FIELDS,
+            "required":   f in required,
         })
     return diffs
 
