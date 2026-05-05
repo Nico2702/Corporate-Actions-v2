@@ -352,7 +352,7 @@ def classify_event(row: dict) -> dict:
         elif marker == "CGL":
             result["event_type"] = "Special Dividend"; result["subtype"] = "Long-Term Capital Gains"
         elif eventcd == "PID":
-            result["event_type"] = "Cash Dividend"; result["subtype"] = "Property Income Distribution (PID)"
+            result["event_type"] = "Cash Dividend"; result["subtype"] = "Property Income Distribution"
         elif marker == "INT":
             result["event_type"] = "Cash Dividend"; result["subtype"] = "Interim"
         elif marker == "FNL":
