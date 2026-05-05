@@ -12,7 +12,7 @@ positives from float artifacts. Empty/None values are treated as equal.
 """
 
 # Event-types currently included in the validation scope.
-SCOPED_TYPES = ("Cash Dividend", "Special Dividend", "Stock Dividend", "Stock Split")
+SCOPED_TYPES = ("Cash Dividend", "Special Dividend", "Stock Dividend", "Stock Split", "Rights Issue")
 
 # Required fields per event type. Mismatches are flagged.
 REQUIRED_FIELDS_BY_TYPE = {
@@ -38,6 +38,13 @@ REQUIRED_FIELDS_BY_TYPE = {
     "Stock Split": (
         "Event_Type",
         "Split_Ratio",
+        "exdt",
+    ),
+    "Rights Issue": (
+        "Event_Type",
+        "Sub_Price",
+        "Sub_Currency",
+        "Sub_Ratio",
         "exdt",
     ),
 }
@@ -68,6 +75,9 @@ DISPLAY_FIELDS_BY_TYPE = {
     ),
     "Stock Split": (
         "Split_Terms",
+    ),
+    "Rights Issue": (
+        "Default_Option",
     ),
 }
 
