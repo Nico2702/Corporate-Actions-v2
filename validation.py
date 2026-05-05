@@ -25,8 +25,9 @@ REQUIRED_FIELDS = (
 )
 
 # Display-only fields (shown in detail view, never trigger a fail).
+# Note: Subtype is NOT here — it's part of the match key (so different
+# subtypes match as separate events, e.g. Interest on Capital vs Ordinary).
 DISPLAY_FIELDS = (
-    "Subtype",
     "Frankdiv",
     "CFI",
     "Depositary_Fee",
@@ -55,11 +56,17 @@ def _norm(v):
 
 
 def _key(row: dict) -> tuple:
-    """Returns the match key (isin_mic, exdt, event_type) for a row."""
+    """Returns the match key (isin_mic, exdt, event_type, subtype) for a row.
+
+    Subtype is part of the key only when non-empty — this allows multiple
+    Cash Dividends on the same ex-date (e.g. Brazilian Interest on Capital
+    + Ordinary Dividend) to be matched as distinct events.
+    """
     isin = (row.get("isin") or "").strip()
     mic  = (row.get("operationalmic") or "").strip()
     isin_mic = f"{isin}-{mic}" if mic else isin
-    return (isin_mic, row.get("exdt") or "", row.get("Event_Type") or "")
+    subtype  = (row.get("Subtype") or "").strip()
+    return (isin_mic, row.get("exdt") or "", row.get("Event_Type") or "", subtype)
 
 
 def _filter_in_scope(rows):
@@ -119,8 +126,8 @@ def validate(edi_rows, factset_rows) -> list[dict]:
     all_keys = set(edi_by_key) | set(fs_by_key)
     results = []
 
-    for k in sorted(all_keys, key=lambda x: (x[1] or "", x[0], x[2]), reverse=True):
-        isin_mic, exdt, etype = k
+    for k in sorted(all_keys, key=lambda x: (x[1] or "", x[0], x[2], x[3]), reverse=True):
+        isin_mic, exdt, etype, subtype = k
         edi_row = edi_by_key.get(k)
         fs_row  = fs_by_key.get(k)
 
@@ -146,6 +153,7 @@ def validate(edi_rows, factset_rows) -> list[dict]:
             "isin_mic":     isin_mic,
             "exdt":         exdt,
             "event_type":   etype,
+            "subtype":      subtype,
             "edi_row":      edi_row,
             "factset_row":  fs_row,
             "fields":       fields,
