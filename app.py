@@ -689,6 +689,16 @@ def render_factset_tab():
         st.warning("No FactSet events match the current filters.")
         return
 
+    # Build a stable list of all FactSet API fields seen in this batch
+    # (so the Raw API Fields tab works even if some records lack some keys).
+    factset_raw_keys = []
+    seen_keys = set()
+    for rec in raw_records:
+        for k in rec.keys():
+            if k not in seen_keys:
+                seen_keys.add(k)
+                factset_raw_keys.append(k)
+
     # ── Summary badges (event-type counts) ────────────────────────────────────
     st.subheader(f"📋 {len(df)} FactSet Events")
     type_counts = df["Event_Type"].value_counts()
@@ -703,33 +713,134 @@ def render_factset_tab():
         )
     st.divider()
 
-    # ── Classified events table ───────────────────────────────────────────────
-    hide_other = st.toggle("Hide 'Other' events", value=True, key="fs_hide_other")
-    df_display = df[df["Event_Type"] != "Other"] if hide_other else df
+    # ── Subtabs (mirrors EDI structure) ───────────────────────────────────────
+    tab1, tab2, tab3 = st.tabs(["🏷️ Classified Events", "📄 Raw API Fields", "🔎 Event Detail"])
 
-    display_cols = [
-        "Event_Type", "Subtype", "Evt_Status", "eventcd",
-        "exdt", "paydt", "recorddt",
-        "Dividend_Amount", "Dividend_Amount_Adjusted",
-        "Tax_Marker", "Adjusted_WHT", "Dividend_Currency",
-        "Stock_Div_Pct", "Stock_Div_Ratio",
-        "Split_Ratio", "Split_Terms",
-        "Sub_Price", "Sub_Currency", "Sub_Ratio",
-        "ECA_Stock_Ratio", "ECA_Stock_Terms",
-        "eventid", "isin", "fsymId",
-    ]
-    display_cols = [c for c in display_cols if c in df_display.columns]
+    # ─── Subtab 1: Classified Events ──────────────────────────────────────────
+    with tab1:
+        # Cancelled / Postponed warning (FactSet uses dividendStatus, not Deleted/Cancelled)
+        flagged = df[df["Evt_Status"].isin(["Cancelled", "Postponed"])] if "Evt_Status" in df.columns else pd.DataFrame()
+        if not flagged.empty:
+            lines = []
+            for _, r in flagged.iterrows():
+                lines.append(f"**{r.get('Evt_Status')}** — eventid `{r.get('eventid')}` | "
+                             f"{r.get('Event_Type', 'Other')} | ex-date: {r.get('exdt') or '—'}")
+            st.error(
+                f"⚠️ **{len(flagged)} event(s) marked as Cancelled/Postponed — "
+                f"check before loading into the system.**\n\n" + "\n\n".join(lines)
+            )
 
-    st.dataframe(
-        df_display[display_cols],
-        use_container_width=True,
-        height=400,
-        column_config=COLUMN_LABELS,
-    )
+        hide_other = st.toggle("Hide 'Other' events", value=True, key="fs_hide_other")
+        df_display = df[df["Event_Type"] != "Other"] if hide_other else df
 
-    # ── Raw JSON expander (for inspection) ────────────────────────────────────
-    with st.expander("📄 Raw FactSet Records (JSON)", expanded=False):
-        st.json(raw_records, expanded=False)
+        display_cols = [
+            "Event_Type", "Subtype", "Evt_Status", "eventcd",
+            "exdt", "paydt", "recorddt",
+            "Dividend_Amount", "Dividend_Amount_Adjusted",
+            "Tax_Marker", "Adjusted_WHT", "Dividend_Currency",
+            "Stock_Div_Pct", "Stock_Div_Ratio",
+            "Split_Ratio", "Split_Terms",
+            "Sub_Price", "Sub_Currency", "Sub_Ratio",
+            "ECA_Stock_Ratio", "ECA_Stock_Terms",
+            "eventid", "isin", "fsymId", "operationalmic",
+        ]
+        display_cols = [c for c in display_cols if c in df_display.columns]
+        st.dataframe(
+            df_display[display_cols],
+            use_container_width=True,
+            height=500,
+            column_config=COLUMN_LABELS,
+        )
+
+    # ─── Subtab 2: Raw API Fields ─────────────────────────────────────────────
+    with tab2:
+        # Build a DataFrame of the raw FactSet records (one row per record,
+        # all API fields as columns). This mirrors EDI's tab2.
+        raw_df = pd.DataFrame(raw_records)
+        # Apply the same sort order as the classified table
+        if "effectiveDate" in raw_df.columns:
+            raw_df = raw_df.sort_values("effectiveDate", ascending=False).reset_index(drop=True)
+        st.dataframe(raw_df[factset_raw_keys] if factset_raw_keys else raw_df,
+                     use_container_width=True, height=500)
+
+    # ─── Subtab 3: Event Detail ───────────────────────────────────────────────
+    with tab3:
+        if len(df) > 0:
+            def _event_label(row):
+                date_hint = (row["exdt"] or
+                             str(row.get("Creation_Date", ""))[:10])
+                subtype   = row.get("Subtype", "")
+                type_hint = subtype or "—"
+                return (f"{row['eventid']} | {row['Event_Type']} — "
+                        f"{type_hint} | {row.get('fsymId','')} | {date_hint}")
+
+            event_options = [_event_label(row) for _, row in df.iterrows()]
+            selected = st.selectbox("Select Event", event_options, key="fs_tab3_select")
+            idx = event_options.index(selected)
+            sel = df.iloc[idx].to_dict()
+
+            # Find the matching raw FactSet record for this event
+            sel_eventid = sel.get("eventid")
+            raw_match = next((r for r in raw_records if r.get("eventId") == sel_eventid), {})
+
+            c1, c2 = st.columns(2)
+            with c1:
+                # ── Classification ─────────────────────────────────────────
+                st.markdown("**🏷️ Classification**")
+                evt = str(sel.get("Event_Type", ""))
+                is_spinoff = evt == "Spin-Off"
+
+                if is_spinoff:
+                    st.json({k: v for k, v in {
+                        "Event_Type":      sel.get("Event_Type"),
+                        "Subtype":         sel.get("Subtype"),
+                        "Stock_Ratio":     sel.get("ECA_Stock_Ratio"),
+                        "Stock_Terms":     sel.get("ECA_Stock_Terms"),
+                    }.items() if v not in (None, "")})
+                else:
+                    st.json({k: v for k, v in {
+                        "Event_Type":               sel.get("Event_Type"),
+                        "Subtype":                  sel.get("Subtype"),
+                        "Dividend_Amount":          sel.get("Dividend_Amount"),
+                        "Dividend_Amount_Adjusted": sel.get("Dividend_Amount_Adjusted"),
+                        "Tax_Marker":               sel.get("Tax_Marker"),
+                        "Adjusted_WHT":             sel.get("Adjusted_WHT"),
+                        "Dividend_Currency":        sel.get("Dividend_Currency"),
+                        "Stock_Div_Pct":            sel.get("Stock_Div_Pct"),
+                        "Stock_Div_Ratio":          sel.get("Stock_Div_Ratio"),
+                        "Split_Ratio":              sel.get("Split_Ratio"),
+                        "Split_Terms":              sel.get("Split_Terms"),
+                        "Sub_Price":                sel.get("Sub_Price"),
+                        "Sub_Currency":             sel.get("Sub_Currency"),
+                        "Sub_Ratio":                sel.get("Sub_Ratio"),
+                    }.items() if v not in (None, "")})
+
+                # ── Lifecycle ──────────────────────────────────────────────
+                st.markdown("**⏱️ Lifecycle**")
+                st.json({k: v for k, v in {
+                    "Ex_Date":           sel.get("exdt"),
+                    "Pay_Date":          sel.get("paydt"),
+                    "Record_Date":       sel.get("recorddt"),
+                    "Announcement_Date": sel.get("Creation_Date"),
+                    "Event_Status":      sel.get("Evt_Status"),
+                }.items() if v not in (None, "")})
+
+            with c2:
+                # ── Raw FactSet Record ─────────────────────────────────────
+                st.markdown("**📄 Raw FactSet Fields**")
+                st.json(raw_match if raw_match else {"_note": "No matching raw record found"})
+
+                # ── Derived ────────────────────────────────────────────────
+                st.markdown("**🔧 Derived Fields**")
+                derived_cols = ["Event_Type", "Subtype", "Evt_Status",
+                                "Dividend_Amount", "Dividend_Amount_Adjusted",
+                                "Tax_Marker", "Adjusted_WHT", "Dividend_Currency",
+                                "Stock_Div_Pct", "Stock_Div_Ratio",
+                                "Split_Ratio", "Split_Terms",
+                                "Sub_Price", "Sub_Currency", "Sub_Ratio",
+                                "ECA_Stock_Ratio", "ECA_Stock_Terms",
+                                "isin", "operationalmic"]
+                st.json({col: sel.get(col, "") for col in derived_cols})
 
 
 # ── Validation Tab Renderer ──────────────────────────────────────────────────
