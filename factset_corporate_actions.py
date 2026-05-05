@@ -199,10 +199,79 @@ def deduplicate(records):
     return out
 
 
+# Codes that trigger an adjustment reverse on dividends sharing the same ex-date.
+# When FactSet returns a stock-div or split on day X, it has already adjusted
+# any cash-dividend on day X. We undo this so users see the unadjusted amount.
+ADJ_REVERSE_TRIGGERS = STOCK_DIV_PCT + STOCK_DIV_RATIO + SPLIT_CODES
+
+
 def merge_events(records):
-    """Step 4 — for now a no-op (FactSet spec doesn't define multi-leg merging
-    like EDI's TKOVR-Election or DIV+DRIP). Preserved for API symmetry."""
-    return list(records)
+    """Step 4 — undo FactSet's same-day adjustment on cash dividends.
+
+    When a cash dividend (DVC/DVCD/DRP) shares its `effectiveDate` with a
+    stock-dividend or split event (DVS/DVSS/BNS/BNSS/SPL/FSP/RSP), FactSet
+    delivers the dividend amount already divided by the split's `adjFactor`.
+    We reverse this: store the original (adjusted) value in a new field and
+    overwrite `amtGrossDecUnadj` with the un-adjusted value.
+
+    Falls back to leaving the dividend untouched if `adjFactor` is missing.
+    """
+    records = list(records)
+
+    # Group adjustment triggers by ex-date for O(1) lookup.
+    triggers_by_date = {}
+    for r in records:
+        eventcd = (r.get("eventTypeCode") or "").upper()
+        if eventcd in ADJ_REVERSE_TRIGGERS:
+            d = r.get("effectiveDate")
+            if d:
+                triggers_by_date.setdefault(d, []).append(r)
+
+    if not triggers_by_date:
+        return records
+
+    # For each cash dividend, check whether the same ex-date carries a trigger.
+    for r in records:
+        eventcd = (r.get("eventTypeCode") or "").upper()
+        if eventcd not in DIVIDEND_CODES:
+            continue
+        # Idempotency guard: skip if we've already processed this record.
+        if "_amtGrossDecAdjusted" in r:
+            continue
+        d = r.get("effectiveDate")
+        if d not in triggers_by_date:
+            continue
+
+        # Pick the first trigger with a usable adjFactor (could be more than
+        # one — rare but possible).
+        adj_factor = None
+        for t in triggers_by_date[d]:
+            af = t.get("adjFactor")
+            try:
+                af_f = float(af) if af is not None else None
+            except (TypeError, ValueError):
+                af_f = None
+            if af_f and af_f != 0:
+                adj_factor = af_f
+                break
+
+        if adj_factor is None:
+            # No usable adjFactor — leave the dividend as-is.
+            continue
+
+        # Preserve the adjusted value, then overwrite with the unadjusted.
+        original = r.get("amtGrossDecUnadj")
+        try:
+            original_f = float(original) if original is not None else None
+        except (TypeError, ValueError):
+            original_f = None
+        if original_f is None:
+            continue
+
+        r["_amtGrossDecAdjusted"] = original_f                 # what FactSet sent
+        r["amtGrossDecUnadj"]     = original_f / adj_factor    # the true unadjusted amount
+
+    return records
 
 
 def classify_event(row: dict, mic: str = "") -> dict:
@@ -356,8 +425,9 @@ def build_rows(processed_records, isin: str = "", mic: str = ""):
             "effectivedt":    r.get("effectiveDate", ""),
 
             # Dividend fields
-            "Dividend_Amount":   "",
-            "Tax_Marker":        "",
+            "Dividend_Amount":          "",
+            "Dividend_Amount_Adjusted": "",
+            "Tax_Marker":               "",
             "Adjusted_WHT":      "",
             "Frankdiv":          "",
             "CFI":               "",
@@ -401,8 +471,9 @@ def build_rows(processed_records, isin: str = "", mic: str = ""):
 
         # ── Cash / Special Dividend ───────────────────────────────────────────
         if eventcd in DIVIDEND_CODES:
-            row["Dividend_Amount"]   = r.get("amtGrossDecUnadj") or ""
-            row["Dividend_Currency"] = r.get("declaredCurrency") or ""
+            row["Dividend_Amount"]          = r.get("amtGrossDecUnadj") or ""
+            row["Dividend_Amount_Adjusted"] = r.get("_amtGrossDecAdjusted") or ""
+            row["Dividend_Currency"]        = r.get("declaredCurrency") or ""
             # Spec: divTypeCode=21 → Tax_Marker=NET (else GROSS)
             row["Tax_Marker"] = "NET" if div_type == 21 else "GROSS"
             # divTypeCode=19 → Property Income Distribution: 20% UK REIT WHT (mirrors EDI)
