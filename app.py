@@ -870,27 +870,47 @@ def render_validation_tab():
         return
 
     # ── Summary metrics ───────────────────────────────────────────────────────
-    counts = {"match": 0, "mismatch": 0, "only_edi": 0, "only_factset": 0}
+    counts = {}
     for r in results:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
 
+    # Row 1: standard statuses
     cols = st.columns(4)
-    cols[0].metric("✅ Match",        counts["match"])
-    cols[1].metric("⚠️ Mismatch",     counts["mismatch"])
-    cols[2].metric("⬅️ Only EDI",     counts["only_edi"])
-    cols[3].metric("➡️ Only FactSet", counts["only_factset"])
+    cols[0].metric("✅ Match",        counts.get("match", 0))
+    cols[1].metric("⚠️ Mismatch",     counts.get("mismatch", 0))
+    cols[2].metric("⬅️ Only EDI",     counts.get("only_edi", 0))
+    cols[3].metric("➡️ Only FactSet", counts.get("only_factset", 0))
+
+    # Row 2: cancellation statuses (only render if any present)
+    cancel_count = (counts.get("cancelled_both", 0) + counts.get("cancelled_edi", 0)
+                    + counts.get("cancelled_factset", 0)
+                    + counts.get("only_edi_cancelled", 0) + counts.get("only_factset_cancelled", 0))
+    if cancel_count > 0:
+        c2 = st.columns(5)
+        c2[0].metric("❌ Cancelled (Both)",        counts.get("cancelled_both", 0))
+        c2[1].metric("❌⬅️ Cancelled by EDI",      counts.get("cancelled_edi", 0))
+        c2[2].metric("❌➡️ Cancelled by FactSet",  counts.get("cancelled_factset", 0))
+        c2[3].metric("⬅️❌ Only EDI · Cancelled",  counts.get("only_edi_cancelled", 0))
+        c2[4].metric("➡️❌ Only FS · Cancelled",   counts.get("only_factset_cancelled", 0))
 
     # Hint if everything is fine
-    if counts["mismatch"] == 0 and counts["only_edi"] == 0 and counts["only_factset"] == 0:
+    issues = sum(v for k, v in counts.items() if k != "match")
+    if issues == 0:
         st.success("🎉 Alle Events stimmen zwischen EDI und FactSet überein!")
 
     st.divider()
 
     # ── Filter ────────────────────────────────────────────────────────────────
+    all_status_options = [
+        "match", "mismatch",
+        "only_edi", "only_factset",
+        "cancelled_both", "cancelled_edi", "cancelled_factset",
+        "only_edi_cancelled", "only_factset_cancelled",
+    ]
     filter_opts = st.multiselect(
         "Filter by status",
-        options=["match", "mismatch", "only_edi", "only_factset"],
-        default=["mismatch", "only_edi", "only_factset"],
+        options=all_status_options,
+        default=[s for s in all_status_options if s != "match"],
         format_func=lambda s: f"{validation.status_icon(s)} {validation.status_label(s)}",
     )
     filtered = [r for r in results if r["status"] in filter_opts]
