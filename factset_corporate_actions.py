@@ -163,6 +163,13 @@ SPLIT_CODES      = SPLIT_FWD_CODES + SPLIT_REV_CODES
 RIGHTS_CODES     = ("DSR",)
 SPINOFF_CODES    = ("SPO",)
 
+# US listing reclassification: when the stock is listed on a US MIC (NYSE/NASDAQ),
+# any of these stock-dividend codes are reclassified as a Forward Stock Split —
+# matches EDI's behaviour. Adjust this set later if specific codes should stay
+# as stock dividends.
+US_MICS                  = {"XNAS", "XNYS"}
+US_RECLASSIFY_TO_SPLIT   = ("DVS", "DVSS", "BNS", "BNSS")
+
 # Date fields we touch in normalize_dates (defensive — FactSet already gives ISO).
 _DATE_FIELDS = ("effectiveDate", "payDate", "recordDate", "announcementDate")
 
@@ -198,11 +205,18 @@ def merge_events(records):
     return list(records)
 
 
-def classify_event(row: dict) -> dict:
+def classify_event(row: dict, mic: str = "") -> dict:
     """Classify a FactSet record into our standard event_type / subtype.
-    Anything outside the spec lands as 'Other'."""
+    Anything outside the spec lands as 'Other'.
+
+    Args:
+      row: a FactSet record.
+      mic: operational MIC of the listing (e.g. 'XNAS') — used for market-
+           specific reclassification (US: stock dividends → forward splits).
+    """
     eventcd  = (row.get("eventTypeCode") or "").upper()
     spec_flg = row.get("dividendsSpecFlag")
+    is_us    = mic.upper() in US_MICS
     result   = {"event_type": "Other", "subtype": "", "ignore": False}
 
     # ── Dividends ─────────────────────────────────────────────────────────────
@@ -240,6 +254,13 @@ def classify_event(row: dict) -> dict:
         # divTypeCode=0 → dividend is cancelled (overrides any dividendStatus from feed)
         if div_type == 0:
             result["status_override"] = "Cancelled"
+        return result
+
+    # ── US listing override: stock dividends → Forward Stock Split ────────────
+    # Mirrors EDI's behaviour for US-listed shares (XNAS/XNYS).
+    if is_us and eventcd in US_RECLASSIFY_TO_SPLIT:
+        result["event_type"] = "Stock Split"
+        result["subtype"]    = "Forward Stock Split"
         return result
 
     # ── Stock Dividend ────────────────────────────────────────────────────────
@@ -303,8 +324,9 @@ def build_rows(processed_records, isin: str = "", mic: str = ""):
     """
     mic = (mic or "").upper()
     rows = []
+    is_us = mic in US_MICS
     for r in processed_records:
-        cl       = classify_event(r)
+        cl       = classify_event(r, mic=mic)
         eventcd  = (r.get("eventTypeCode") or "").upper()
         div_type = r.get("divTypeCode")
 
@@ -390,8 +412,23 @@ def build_rows(processed_records, isin: str = "", mic: str = ""):
             elif div_type == 4 and mic == "BVMF":
                 row["Adjusted_WHT"] = "17.5%"
 
-        # ── Stock Dividend (DVS/DVSS use distPct directly) ────────────────────
-        if eventcd in STOCK_DIV_PCT:
+        # ── Stock Dividend / US Forward Split branch ─────────────────────────
+        # On US listings (XNAS/XNYS), DVS/DVSS/BNS/BNSS are reclassified as
+        # Forward Stock Split — values go into Split_* fields with EDI's
+        # formula: ratio = (new + old) / old, terms = "(new+old) : old".
+        if is_us and eventcd in US_RECLASSIFY_TO_SPLIT:
+            new = r.get("distNewTerm")
+            old = r.get("distOldTerm")
+            try:
+                rn = float(new); ro = float(old)
+                if ro:
+                    row["Split_Ratio"] = f"{(rn + ro) / ro:.6f}"
+                    row["Split_Terms"] = f"{int(rn + ro)} : {int(ro)}"
+            except (TypeError, ValueError):
+                pass
+
+        # ── Stock Dividend (DVS/DVSS use distPct directly) — non-US ──────────
+        elif eventcd in STOCK_DIV_PCT:
             pct = r.get("distPct")
             if pct is not None:
                 try:
@@ -401,14 +438,14 @@ def build_rows(processed_records, isin: str = "", mic: str = ""):
                 except (TypeError, ValueError):
                     pass
 
-        # ── Stock Dividend (BNS/BNSS use new/old ratio) ───────────────────────
-        if eventcd in STOCK_DIV_RATIO:
+        # ── Stock Dividend (BNS/BNSS use new/old ratio) — non-US ─────────────
+        elif eventcd in STOCK_DIV_RATIO:
             ratio = _safe_div(r.get("distNewTerm"), r.get("distOldTerm"))
             if ratio is not None:
                 row["Stock_Div_Pct"]   = f"{ratio*100:.4f}%"
                 row["Stock_Div_Ratio"] = f"{1 + ratio:.6f}"
 
-        # ── Stock Split ───────────────────────────────────────────────────────
+        # ── Stock Split (native split codes — apply on all markets) ──────────
         if eventcd in SPLIT_CODES:
             ratio = _safe_div(r.get("distNewTerm"), r.get("distOldTerm"))
             if ratio is not None:
