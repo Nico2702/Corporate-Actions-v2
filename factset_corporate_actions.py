@@ -235,6 +235,10 @@ def merge_events(records):
         eventcd = (r.get("eventTypeCode") or "").upper()
         if eventcd not in DIVIDEND_CODES:
             continue
+        # Skip Acquisition records (divType=16) — these aren't dividends, so
+        # no FactSet split-adjustment was applied to them.
+        if r.get("divTypeCode") == 16:
+            continue
         # Idempotency guard: skip if we've already processed this record.
         if "_amtGrossDecAdjusted" in r:
             continue
@@ -290,13 +294,22 @@ def classify_event(row: dict, mic: str = "") -> dict:
 
     # ── Dividends ─────────────────────────────────────────────────────────────
     if eventcd in DIVIDEND_CODES:
+        div_type = row.get("divTypeCode")
+
+        # divTypeCode=16 → not actually a dividend, but the cash terms of
+        # an Acquisition wrapped in a dividend-shaped record. Reclassify
+        # as Merger & Acquisition / Cash deal.
+        if div_type == 16:
+            result["event_type"] = "Merger & Acquisition"
+            result["subtype"]    = ""
+            return result
+
         if spec_flg == 1:
             result["event_type"] = "Special Dividend"
         else:
             # spec_flg = 0 OR null → Cash Dividend per spec
             result["event_type"] = "Cash Dividend"
         # Subtype: certain divTypeCodes carry semantic meaning (mirrors EDI conventions)
-        div_type = row.get("divTypeCode")
         if div_type == 1:
             result["event_type"] = "Cash Dividend"
         elif div_type == 2:
@@ -474,8 +487,15 @@ def build_rows(processed_records, isin: str = "", mic: str = ""):
             "feedgendate":   "",
         }
 
+        # ── divTypeCode=16: Acquisition (cash terms wrapped in dividend record) ─
+        if eventcd in DIVIDEND_CODES and div_type == 16:
+            row["Deal_Type"]              = "Cash"
+            row["MA_Cash_Terms"]          = r.get("amtGrossDecUnadj") or ""
+            row["MA_Cash_Terms_Currency"] = r.get("declaredCurrency") or ""
+            # Dividend_Amount + Dividend_Currency stay empty — this is not a dividend.
+
         # ── Cash / Special Dividend ───────────────────────────────────────────
-        if eventcd in DIVIDEND_CODES:
+        elif eventcd in DIVIDEND_CODES:
             row["Dividend_Amount"]          = r.get("amtGrossDecUnadj") or ""
             row["Dividend_Amount_Adjusted"] = r.get("_amtGrossDecAdjusted") or ""
             row["Dividend_Currency"]        = r.get("declaredCurrency") or ""
