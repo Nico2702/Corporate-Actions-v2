@@ -52,8 +52,6 @@ EVENT_TYPE_COLORS = {
     "Cash Dividend":          "badge-cash",
     "Special Dividend":       "badge-special",
     "Stock Dividend":         "badge-stock",
-    "Cash or Stock Dividend": "badge-stock",
-    "Cash + Stock Dividend":  "badge-stock",
     "Stock Split":            "badge-split",
     "Rights Issue":           "badge-rights",
     "Merger & Acquisition":   "badge-takeover",
@@ -168,7 +166,6 @@ with st.sidebar:
     event_type_filter = st.multiselect(
         "Filter by Event Type",
         options=["Cash Dividend", "Special Dividend", "Stock Dividend",
-                 "Cash or Stock Dividend", "Cash + Stock Dividend",
                  "Stock Split", "Rights Issue",
                  "Merger & Acquisition", "Spin-Off", "Stock Distribution",
                  "Other"],
