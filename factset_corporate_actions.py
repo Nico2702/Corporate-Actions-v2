@@ -369,7 +369,7 @@ def classify_event(row: dict, mic: str = "") -> dict:
     # ── Spin-Off ──────────────────────────────────────────────────────────────
     if eventcd in SPINOFF_CODES:
         result["event_type"] = "Spin-Off"
-        result["subtype"]    = "Demerger"
+        result["subtype"]    = ""
         return result
 
     return result
