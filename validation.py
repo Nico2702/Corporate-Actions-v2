@@ -27,12 +27,18 @@ REQUIRED_FIELDS = (
 # Note: Subtype is NOT here — it's part of the match key (so different
 # subtypes match as separate events, e.g. Interest on Capital vs Ordinary).
 DISPLAY_FIELDS = (
+    "Evt_Status",
     "Adjusted_WHT",
     "Frankdiv",
     "CFI",
     "Depositary_Fee",
     "Tax_Relief_Fee",
 )
+
+
+def _is_cancelled(row: dict) -> bool:
+    """True if the row's Evt_Status indicates a cancelled event."""
+    return (row.get("Evt_Status") or "").strip().lower() == "cancelled"
 
 
 def _norm(v):
@@ -165,18 +171,42 @@ def validate(edi_rows, factset_rows) -> list[dict]:
         if edi_row and fs_row:
             fields = _compare_fields(edi_row, fs_row)
             mismatched = [f for f in fields if f["required"] and not f["match"]]
-            status = "match" if not mismatched else "mismatch"
-            summary = "; ".join(
-                f"{f['field']}: {f['edi']!r} ≠ {f['factset']!r}" for f in mismatched
-            ) if mismatched else "—"
+            edi_cancelled = _is_cancelled(edi_row)
+            fs_cancelled  = _is_cancelled(fs_row)
+
+            if edi_cancelled and fs_cancelled:
+                status  = "cancelled_both"
+                summary = "Cancelled by both EDI and FactSet"
+            elif edi_cancelled and not fs_cancelled:
+                status  = "cancelled_edi"
+                summary = "Cancelled by EDI — still active in FactSet"
+            elif fs_cancelled and not edi_cancelled:
+                status  = "cancelled_factset"
+                summary = "Cancelled by FactSet — still active in EDI"
+            elif mismatched:
+                status  = "mismatch"
+                summary = "; ".join(
+                    f"{f['field']}: {f['edi']!r} ≠ {f['factset']!r}" for f in mismatched
+                )
+            else:
+                status  = "match"
+                summary = "—"
         elif edi_row:
             fields = []
-            status = "only_edi"
-            summary = "Event missing in FactSet"
+            if _is_cancelled(edi_row):
+                status  = "only_edi_cancelled"
+                summary = "Cancelled in EDI · not present in FactSet"
+            else:
+                status  = "only_edi"
+                summary = "Event missing in FactSet"
         else:
             fields = []
-            status = "only_factset"
-            summary = "Event missing in EDI"
+            if _is_cancelled(fs_row):
+                status  = "only_factset_cancelled"
+                summary = "Cancelled in FactSet · not present in EDI"
+            else:
+                status  = "only_factset"
+                summary = "Event missing in EDI"
 
         results.append({
             "status":       status,
@@ -197,17 +227,27 @@ def validate(edi_rows, factset_rows) -> list[dict]:
 def status_icon(status: str) -> str:
     """Maps a status string to an emoji for compact display."""
     return {
-        "match":        "✅",
-        "mismatch":     "⚠️",
-        "only_edi":     "⬅️",
-        "only_factset": "➡️",
+        "match":                  "✅",
+        "mismatch":               "⚠️",
+        "only_edi":               "⬅️",
+        "only_factset":           "➡️",
+        "cancelled_both":         "❌",
+        "cancelled_edi":          "❌⬅️",
+        "cancelled_factset":      "❌➡️",
+        "only_edi_cancelled":     "⬅️❌",
+        "only_factset_cancelled": "➡️❌",
     }.get(status, "?")
 
 
 def status_label(status: str) -> str:
     return {
-        "match":        "Match",
-        "mismatch":     "Mismatch",
-        "only_edi":     "Only EDI",
-        "only_factset": "Only FactSet",
+        "match":                  "Match",
+        "mismatch":               "Mismatch",
+        "only_edi":               "Only EDI",
+        "only_factset":           "Only FactSet",
+        "cancelled_both":         "Cancelled by Both",
+        "cancelled_edi":          "Cancelled by EDI",
+        "cancelled_factset":      "Cancelled by FactSet",
+        "only_edi_cancelled":     "Only EDI · Cancelled",
+        "only_factset_cancelled": "Only FactSet · Cancelled",
     }.get(status, status)
