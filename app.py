@@ -273,8 +273,9 @@ if fetch_btn:
             fs_result,  fs_error  = f_fs.result()
 
         # Remember the user-supplied ISIN + MIC so the FactSet tab can stamp them on rows
-        st.session_state["query_isin"] = isin
-        st.session_state["query_mic"]  = op_mic
+        st.session_state["query_isin"]   = isin
+        st.session_state["query_mic"]    = op_mic
+        st.session_state["query_ticker"] = ticker
 
         # Store EDI
         if edi_result is not None:
@@ -921,15 +922,34 @@ def render_validation_tab():
 
     # ── Variant B: compact diff table ─────────────────────────────────────────
     st.subheader(f"📋 {len(filtered)} Events")
+
+    # Pull the FactSet ticker from the sidebar input — used for the FS-ID column
+    fs_ticker = st.session_state.get("query_ticker", "") or ""
+
+    def _val(r, field):
+        """EDI value first, fall back to FactSet (used for Only-FactSet rows)."""
+        edi_v = (r.get("edi_row") or {}).get(field)
+        if edi_v not in (None, ""):
+            return edi_v
+        return (r.get("factset_row") or {}).get(field, "") or ""
+
     summary_rows = []
     for r in filtered:
+        # Company name: only EDI carries issuername; if Only-FactSet, leave blank
+        company = (r.get("edi_row") or {}).get("issuername", "") or ""
         summary_rows.append({
-            "Status":     f"{validation.status_icon(r['status'])} {validation.status_label(r['status'])}",
-            "Ex_Date":    r["exdt"],
-            "Event_Type": r["event_type"],
-            "Subtype":    r["subtype"] or "—",
-            "ISIN-MIC":   r["isin_mic"],
-            "Differences": r["diff_summary"],
+            "Company":          company,
+            "ISIN-MIC":         r["isin_mic"],
+            "FS_ID":            fs_ticker,
+            "Event_Type":       r["event_type"],
+            "Subtype":          r["subtype"] or "—",
+            "Dividend_Amount":  _val(r, "Dividend_Amount"),
+            "Dividend_Currency": _val(r, "Dividend_Currency"),
+            "Tax_Marker":       _val(r, "Tax_Marker"),
+            "Adjusted_WHT":     _val(r, "Adjusted_WHT"),
+            "Ex_Date":          r["exdt"],
+            "Status":           f"{validation.status_icon(r['status'])} {validation.status_label(r['status'])}",
+            "Differences":      r["diff_summary"],
         })
     summary_df = pd.DataFrame(summary_rows)
     st.dataframe(
@@ -937,12 +957,18 @@ def render_validation_tab():
         use_container_width=True,
         height=400,
         column_config={
-            "Status":      st.column_config.TextColumn("Status",     width=130),
-            "Ex_Date":     st.column_config.DateColumn("Ex-Date"),
-            "Event_Type":  st.column_config.TextColumn("Event Type", width=160),
-            "Subtype":     st.column_config.TextColumn("Subtype",    width=200),
-            "ISIN-MIC":    st.column_config.TextColumn("ISIN-MIC",   width=180),
-            "Differences": st.column_config.TextColumn("Differences", width=600),
+            "Company":            st.column_config.TextColumn("Company",          width=200),
+            "ISIN-MIC":           st.column_config.TextColumn("ISIN-MIC",         width=180),
+            "FS_ID":              st.column_config.TextColumn("FS-ID",            width=110),
+            "Event_Type":         st.column_config.TextColumn("Event Type",       width=160),
+            "Subtype":            st.column_config.TextColumn("Subtype",          width=200),
+            "Dividend_Amount":    st.column_config.NumberColumn("Div Amount",     format="%.4f"),
+            "Dividend_Currency":  st.column_config.TextColumn("Ccy",              width=60),
+            "Tax_Marker":         st.column_config.TextColumn("Tax",              width=70),
+            "Adjusted_WHT":       st.column_config.TextColumn("Adjusted WHT",     width=110),
+            "Ex_Date":            st.column_config.DateColumn("Ex-Date"),
+            "Status":             st.column_config.TextColumn("Status",           width=170),
+            "Differences":        st.column_config.TextColumn("Differences",      width=500),
         },
     )
 
