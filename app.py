@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import edi_corporate_actions as edi
 import factset_corporate_actions as factset
+import validation
 
 # ── Page Config ───────────────────────────────────────────────────────────────
 st.set_page_config(page_title="EDI Corporate Actions", page_icon="📊", layout="wide")
@@ -361,6 +362,7 @@ def render_edi_tab():
     deduped   = edi.deduplicate(records)
     processed = edi.merge_events(deduped)
     rows      = edi.build_rows(processed)
+    st.session_state["edi_rows_processed"] = rows
     df        = pd.DataFrame(rows)
 
     # Sort by Ex-Date descending (newest first; empty exdt goes to the bottom)
@@ -675,6 +677,7 @@ def render_factset_tab():
     deduped    = factset.deduplicate(normalized)
     processed  = factset.merge_events(deduped)
     rows       = factset.build_rows(processed, isin=query_isin, mic=query_mic)
+    st.session_state["factset_rows_processed"] = rows
     df         = pd.DataFrame(rows)
 
     # Sort by Ex-Date descending (newest first; empty exdt goes to the bottom)
@@ -845,8 +848,128 @@ def render_factset_tab():
 
 # ── Validation Tab Renderer ──────────────────────────────────────────────────
 def render_validation_tab():
-    st.info("✅ Validation Tab — vergleicht CAs vom selben Typ am selben Ex-Tag "
-            "zwischen EDI und FactSet. Wird gebaut sobald FactSet Daten liefert.")
+    edi_rows = st.session_state.get("edi_rows_processed")
+    fs_rows  = st.session_state.get("factset_rows_processed")
+
+    if edi_rows is None and fs_rows is None:
+        st.info("Validation noch nicht möglich — EDI und/oder FactSet noch nicht geladen.")
+        return
+    if edi_rows is None:
+        st.warning("⚠️ Nur FactSet geladen — Validation braucht beide Quellen. "
+                   "Bitte EDI-Key in der Sidebar eintragen und neu fetchen.")
+        return
+    if fs_rows is None:
+        st.warning("⚠️ Nur EDI geladen — Validation braucht beide Quellen. "
+                   "Bitte FactSet-Key + Ticker in der Sidebar eintragen und neu fetchen.")
+        return
+
+    results = validation.validate(edi_rows, fs_rows)
+
+    if not results:
+        st.info("Keine Cash/Special-Dividenden in beiden Quellen für Validierung gefunden.")
+        return
+
+    # ── Summary metrics ───────────────────────────────────────────────────────
+    counts = {"match": 0, "mismatch": 0, "only_edi": 0, "only_factset": 0}
+    for r in results:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+
+    cols = st.columns(4)
+    cols[0].metric("✅ Match",        counts["match"])
+    cols[1].metric("⚠️ Mismatch",     counts["mismatch"])
+    cols[2].metric("⬅️ Only EDI",     counts["only_edi"])
+    cols[3].metric("➡️ Only FactSet", counts["only_factset"])
+
+    # Hint if everything is fine
+    if counts["mismatch"] == 0 and counts["only_edi"] == 0 and counts["only_factset"] == 0:
+        st.success("🎉 Alle Events stimmen zwischen EDI und FactSet überein!")
+
+    st.divider()
+
+    # ── Filter ────────────────────────────────────────────────────────────────
+    filter_opts = st.multiselect(
+        "Filter by status",
+        options=["match", "mismatch", "only_edi", "only_factset"],
+        default=["mismatch", "only_edi", "only_factset"],
+        format_func=lambda s: f"{validation.status_icon(s)} {validation.status_label(s)}",
+    )
+    filtered = [r for r in results if r["status"] in filter_opts]
+
+    if not filtered:
+        st.info("Keine Events match die aktuelle Filter-Auswahl.")
+        return
+
+    # ── Variant B: compact diff table ─────────────────────────────────────────
+    st.subheader(f"📋 {len(filtered)} Events")
+    summary_rows = []
+    for r in filtered:
+        summary_rows.append({
+            "Status":     f"{validation.status_icon(r['status'])} {validation.status_label(r['status'])}",
+            "Ex_Date":    r["exdt"],
+            "Event_Type": r["event_type"],
+            "ISIN-MIC":   r["isin_mic"],
+            "Differences": r["diff_summary"],
+        })
+    summary_df = pd.DataFrame(summary_rows)
+    st.dataframe(
+        summary_df,
+        use_container_width=True,
+        height=400,
+        column_config={
+            "Status":      st.column_config.TextColumn("Status",     width=130),
+            "Ex_Date":     st.column_config.DateColumn("Ex-Date"),
+            "Event_Type":  st.column_config.TextColumn("Event Type", width=160),
+            "ISIN-MIC":    st.column_config.TextColumn("ISIN-MIC",   width=180),
+            "Differences": st.column_config.TextColumn("Differences", width=600),
+        },
+    )
+
+    # ── Variant C: Master-Detail expander ─────────────────────────────────────
+    st.divider()
+    st.markdown("### 🔎 Detail View")
+
+    detail_options = [
+        f"{validation.status_icon(r['status'])} {r['exdt']} | {r['event_type']} | {r['isin_mic']}"
+        for r in filtered
+    ]
+    selected = st.selectbox("Select event for detailed comparison", detail_options, key="val_select")
+    sel_idx = detail_options.index(selected)
+    sel = filtered[sel_idx]
+
+    st.markdown(f"**Status:** {validation.status_icon(sel['status'])} {validation.status_label(sel['status'])} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                f"**Ex-Date:** {sel['exdt']} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                f"**Event:** {sel['event_type']} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                f"**ISIN-MIC:** `{sel['isin_mic']}`")
+
+    if sel["status"] in ("only_edi", "only_factset"):
+        st.warning(sel["diff_summary"])
+        which = "edi_row" if sel["status"] == "only_edi" else "factset_row"
+        st.markdown(f"**Source row ({sel['status'].replace('_',' ').upper()}):**")
+        st.json({k: v for k, v in (sel[which] or {}).items() if v not in (None, "")})
+    else:
+        # Side-by-side field comparison
+        detail_rows = []
+        for f in sel["fields"]:
+            detail_rows.append({
+                "Field":    f["field"],
+                "EDI":      f["edi"]     if f["edi"]     != "" else "—",
+                "FactSet":  f["factset"] if f["factset"] != "" else "—",
+                "Status":   "✅" if f["match"] else ("⚠️" if f["required"] else "ℹ️"),
+                "Type":     "Required" if f["required"] else "Display only",
+            })
+        detail_df = pd.DataFrame(detail_rows)
+        st.dataframe(
+            detail_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Field":   st.column_config.TextColumn("Field",   width=200),
+                "EDI":     st.column_config.TextColumn("EDI",     width=180),
+                "FactSet": st.column_config.TextColumn("FactSet", width=180),
+                "Status":  st.column_config.TextColumn("",        width=60),
+                "Type":    st.column_config.TextColumn("Type",    width=110),
+            },
+        )
 
 
 # ── Top-Level Tabs ────────────────────────────────────────────────────────────
