@@ -20,7 +20,6 @@ REQUIRED_FIELDS = (
     "Dividend_Amount",
     "Dividend_Currency",
     "Tax_Marker",
-    "Adjusted_WHT",
     "exdt",                # = Ex_Date
 )
 
@@ -28,6 +27,7 @@ REQUIRED_FIELDS = (
 # Note: Subtype is NOT here — it's part of the match key (so different
 # subtypes match as separate events, e.g. Interest on Capital vs Ordinary).
 DISPLAY_FIELDS = (
+    "Adjusted_WHT",
     "Frankdiv",
     "CFI",
     "Depositary_Fee",
