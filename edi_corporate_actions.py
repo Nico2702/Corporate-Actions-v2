@@ -900,17 +900,16 @@ def build_rows(processed_records):
             row["ECA_Status"]        = derive_eca_status(r, r.get("eventcd","").upper())
 
         elif is_election:
-            row["Event_Type"]        = "Cash or Stock Dividend"
-            row["Subtype"]           = "Election"
+            # Shareholder election (cash-or-stock): default to the cash leg.
+            # We don't expose the stock alternative — for index loading, only
+            # the cash payout is relevant.
+            row["Event_Type"]        = "Cash Dividend"
+            row["Subtype"]           = ""
             row["Dividend_Amount"]   = r.get("_opt1_grossdividend") or r.get("_opt1_netdividend") or ""
             row["Tax_Marker"]        = "GROSS"
             row["Dividend_Currency"] = r.get("ratecurencd", "")
             row["Depositary_Fee"]    = r.get("depfees", "")
             row["Tax_Relief_Fee"]    = r.get("taxrelieffee", "")
-            ratio = safe_div(r.get("_opt2_rationew"), r.get("_opt2_ratioold"))
-            row["Stock_Div_Pct"]     = f"{ratio*100:.4f}%" if ratio else ""
-            row["Stock_Div_Ratio"]   = f"{1+ratio:.6f}"    if ratio else ""
-            row["Default_Option"]    = "Cash"
 
         elif cl["event_type"] == "ID Change":
             row["Event_Type"]     = "ID Change"
@@ -991,6 +990,30 @@ def build_rows(processed_records):
             row_non["Adjusted_WHT"]    = ""
             row_non["Subtype"]         = cl.get("_base_subtype") or ""
             rows.append(row_non)
+        elif row.get("Event_Type") == "Cash + Stock Dividend":
+            # Split the combined event into two distinct rows: one Cash Dividend
+            # (optionid='1') and one Stock Dividend (optionid='2'), both sharing
+            # the same eventid. This makes the index-loading clearer — both
+            # payouts must be processed separately.
+            row_cash = dict(row)
+            row_cash["Event_Type"]      = "Cash Dividend"
+            row_cash["Subtype"]         = ""
+            row_cash["optionid"]        = "1"
+            row_cash["Stock_Div_Pct"]   = ""
+            row_cash["Stock_Div_Ratio"] = ""
+            rows.append(row_cash)
+
+            row_stock = dict(row)
+            row_stock["Event_Type"]        = "Stock Dividend"
+            row_stock["Subtype"]           = ""
+            row_stock["optionid"]          = "2"
+            row_stock["Dividend_Amount"]   = ""
+            row_stock["Dividend_Currency"] = ""
+            row_stock["Tax_Marker"]        = ""
+            row_stock["Adjusted_WHT"]      = ""
+            row_stock["Depositary_Fee"]    = ""
+            row_stock["Tax_Relief_Fee"]    = ""
+            rows.append(row_stock)
         else:
             rows.append(row)
     return rows
