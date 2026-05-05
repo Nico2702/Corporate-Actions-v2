@@ -79,6 +79,7 @@ COLUMN_LABELS = {
     "recorddt":                st.column_config.DateColumn("Record Date"),
     # Dividend
     "Dividend_Amount":         st.column_config.NumberColumn("Div Amount",      format="%.4f"),
+    "Dividend_Amount_Adjusted": st.column_config.NumberColumn("Div Amount Adj.", format="%.4f", help="Original FactSet value before split-adjustment reverse"),
     "Tax_Marker":              st.column_config.TextColumn("Tax",               width=70),
     "Dividend_Currency":       st.column_config.TextColumn("Ccy",               width=60),
     "Adjusted_WHT":            st.column_config.TextColumn("Adjusted WHT",      width=100),
@@ -709,7 +710,8 @@ def render_factset_tab():
     display_cols = [
         "Event_Type", "Subtype", "Evt_Status", "eventcd",
         "exdt", "paydt", "recorddt",
-        "Dividend_Amount", "Tax_Marker", "Adjusted_WHT", "Dividend_Currency",
+        "Dividend_Amount", "Dividend_Amount_Adjusted",
+        "Tax_Marker", "Adjusted_WHT", "Dividend_Currency",
         "Stock_Div_Pct", "Stock_Div_Ratio",
         "Split_Ratio", "Split_Terms",
         "Sub_Price", "Sub_Currency", "Sub_Ratio",
