@@ -209,11 +209,11 @@ def merge_events(records):
     """Step 4 — undo FactSet's same-day adjustment on cash dividends.
 
     When a cash dividend (DVC/DVCD/DRP) shares its `effectiveDate` with a
-    stock-dividend or split event (DVS/DVSS/BNS/BNSS/SPL/FSP/RSP), FactSet
-    delivers the dividend amount already multiplied by the split's `adjFactor`.
-    We reverse this by dividing by `adjFactor`: store the original (adjusted)
-    value in a new field and overwrite `amtGrossDecUnadj` with the un-adjusted
-    value.
+    stock-dividend or split event (DVS/DVSS/BNS/BNSS/SPL/FSP/RSP), FactSet's
+    `amtGrossDecUnadj` field — despite its name — contains the adjusted
+    (post-split) value, not the un-adjusted one. We reverse this by dividing
+    by `adjFactor`: store the original (adjusted) value in `_amtGrossDecAdjusted`
+    and overwrite `amtGrossDecUnadj` with the true un-adjusted value.
 
     Falls back to leaving the dividend untouched if `adjFactor` is missing.
     """
