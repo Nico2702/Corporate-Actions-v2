@@ -71,7 +71,7 @@ COLUMN_LABELS = {
     # Core
     "Event_Type":              st.column_config.TextColumn("Event Type",        width=160),
     "Subtype":                 st.column_config.TextColumn("Subtype",           width=210),
-    "Evt_Status":              st.column_config.TextColumn("Status",            width=90),
+    "Is_Cancelled":            st.column_config.CheckboxColumn("Cancelled",      width=90),
     # Dates
     "exdt":                    st.column_config.DateColumn("Ex-Date"),
     "paydt":                   st.column_config.DateColumn("Pay Date"),
@@ -395,8 +395,8 @@ def render_edi_tab():
     tab1, tab2, tab3 = st.tabs(["🏷️ Classified Events", "📄 Raw API Fields", "🔎 Event Detail"])
 
     with tab1:
-        # ── Deleted / Cancelled Warning ───────────────────────────────────────────
-        dc_events = df[df["Evt_Status"].isin(["Deleted", "Cancelled"])] if "Evt_Status" in df.columns else pd.DataFrame()
+        # ── Cancelled Warning ─────────────────────────────────────────────────────
+        dc_events = df[df["Is_Cancelled"] == True] if "Is_Cancelled" in df.columns else pd.DataFrame()
         # Only actionable if ex-date was known AND at least one value field was populated
         if not dc_events.empty:
             has_exdt = dc_events["exdt"].astype(str).str.strip().ne("")
@@ -414,17 +414,17 @@ def render_edi_tab():
         if not dc_events.empty:
             lines = []
             for _, r in dc_events.iterrows():
-                lines.append(f"**{r.get('Evt_Status')}** — eventid `{r.get('eventid')}` | "
+                lines.append(f"**Cancelled** — eventid `{r.get('eventid')}` | "
                              f"{r.get('Event_Type', 'Other')} | ex-date: {r.get('exdt') or '—'}")
             st.error(
-                f"⚠️ **{len(dc_events)} event(s) marked as Deleted/Cancelled — "
+                f"⚠️ **{len(dc_events)} event(s) marked as cancelled — "
                 f"remove from system if already loaded.**\n\n" + "\n\n".join(lines)
             )
 
         hide_other = st.toggle("Hide 'Other' events", value=True)
         df_display = df[df["Event_Type"] != "Other"] if hide_other else df
         div_display = [
-            "Event_Type", "Subtype", "Evt_Status", "eventcd", "marker", "paytypecd",
+            "Event_Type", "Subtype", "Is_Cancelled", "eventcd", "marker", "paytypecd",
             "exdt", "paydt", "recorddt",
             "Dividend_Amount", "Frankdiv", "CFI", "Tax_Marker", "Adjusted_WHT", "Depositary_Fee", "Tax_Relief_Fee", "Dividend_Currency",
             "Stock_Div_Pct", "Stock_Div_Ratio", "Split_Ratio", "Split_Terms",
@@ -463,16 +463,16 @@ def render_edi_tab():
 
         # ── Deleted / Cancelled Expander ─────────────────────────────────────────
         if not dc_events.empty:
-            with st.expander(f"⚠️ Deleted / Cancelled Events ({len(dc_events)})", expanded=False):
-                dc_cols = [c for c in ["Evt_Status", "Event_Type", "Subtype", "eventcd",
+            with st.expander(f"⚠️ Cancelled Events ({len(dc_events)})", expanded=False):
+                dc_cols = [c for c in ["Is_Cancelled", "Event_Type", "Subtype", "eventcd",
                                         "exdt", "paydt", "eventid", "Creation_Date",
                                         "feedgendate", "evtactioncd"] if c in dc_events.columns]
                 st.dataframe(dc_events[dc_cols], use_container_width=True,
                              column_config={
-                                 "Evt_Status": st.column_config.TextColumn("Status",     width=90),
-                                 "Event_Type": st.column_config.TextColumn("Event Type", width=160),
-                                 "exdt":       st.column_config.DateColumn("Ex-Date"),
-                                 "paydt":      st.column_config.DateColumn("Pay Date"),
+                                 "Is_Cancelled": st.column_config.CheckboxColumn("Cancelled",  width=90),
+                                 "Event_Type":   st.column_config.TextColumn("Event Type", width=160),
+                                 "exdt":         st.column_config.DateColumn("Ex-Date"),
+                                 "paydt":        st.column_config.DateColumn("Pay Date"),
                                  "evtactioncd":st.column_config.TextColumn("Raw Code",   width=80),
                              })
 
@@ -719,15 +719,15 @@ def render_factset_tab():
 
     # ─── Subtab 1: Classified Events ──────────────────────────────────────────
     with tab1:
-        # Cancelled / Postponed warning (FactSet uses dividendStatus, not Deleted/Cancelled)
-        flagged = df[df["Evt_Status"].isin(["Cancelled", "Postponed"])] if "Evt_Status" in df.columns else pd.DataFrame()
+        # Cancelled warning
+        flagged = df[df["Is_Cancelled"] == True] if "Is_Cancelled" in df.columns else pd.DataFrame()
         if not flagged.empty:
             lines = []
             for _, r in flagged.iterrows():
-                lines.append(f"**{r.get('Evt_Status')}** — eventid `{r.get('eventid')}` | "
+                lines.append(f"**Cancelled** — eventid `{r.get('eventid')}` | "
                              f"{r.get('Event_Type', 'Other')} | ex-date: {r.get('exdt') or '—'}")
             st.error(
-                f"⚠️ **{len(flagged)} event(s) marked as Cancelled/Postponed — "
+                f"⚠️ **{len(flagged)} event(s) marked as cancelled — "
                 f"check before loading into the system.**\n\n" + "\n\n".join(lines)
             )
 
@@ -735,7 +735,7 @@ def render_factset_tab():
         df_display = df[df["Event_Type"] != "Other"] if hide_other else df
 
         display_cols = [
-            "Event_Type", "Subtype", "Evt_Status", "eventcd",
+            "Event_Type", "Subtype", "Is_Cancelled", "eventcd",
             "exdt", "paydt", "recorddt",
             "Dividend_Amount", "Dividend_Amount_Adjusted",
             "Tax_Marker", "Adjusted_WHT", "Dividend_Currency",
@@ -824,7 +824,7 @@ def render_factset_tab():
                     "Pay_Date":          sel.get("paydt"),
                     "Record_Date":       sel.get("recorddt"),
                     "Announcement_Date": sel.get("Creation_Date"),
-                    "Event_Status":      sel.get("Evt_Status"),
+                    "Is_Cancelled":      sel.get("Is_Cancelled"),
                 }.items() if v not in (None, "")})
 
             with c2:
@@ -834,7 +834,7 @@ def render_factset_tab():
 
                 # ── Derived ────────────────────────────────────────────────
                 st.markdown("**🔧 Derived Fields**")
-                derived_cols = ["Event_Type", "Subtype", "Evt_Status",
+                derived_cols = ["Event_Type", "Subtype", "Is_Cancelled",
                                 "Dividend_Amount", "Dividend_Amount_Adjusted",
                                 "Tax_Marker", "Adjusted_WHT", "Dividend_Currency",
                                 "Stock_Div_Pct", "Stock_Div_Ratio",
