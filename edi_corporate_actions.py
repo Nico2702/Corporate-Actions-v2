@@ -330,12 +330,6 @@ def classify_event(row: dict) -> dict:
             result["dividend_amount"] = amount
             result["tax_marker"]      = "GROSS"
         result["dividend_currency"] = ratecurencd
-        if marker == "INT":
-            result["subtype"] = "Interim"
-        elif marker == "FNL":
-            result["subtype"] = "Final"
-        elif marker == "ANL":
-            result["subtype"] = "Annual"
         return result
 
     # ── DIV / DIVIF / DRIP / PID ─────────────────────────────────────────────
@@ -354,13 +348,13 @@ def classify_event(row: dict) -> dict:
         elif eventcd == "PID":
             result["event_type"] = "Cash Dividend"; result["subtype"] = "Property Income Distribution"
         elif marker == "INT":
-            result["event_type"] = "Cash Dividend"; result["subtype"] = "Interim"
+            result["event_type"] = "Cash Dividend"
         elif marker == "FNL":
-            result["event_type"] = "Cash Dividend"; result["subtype"] = "Final"
+            result["event_type"] = "Cash Dividend"
         elif marker == "ANL":
-            result["event_type"] = "Cash Dividend"; result["subtype"] = "Annual"
+            result["event_type"] = "Cash Dividend"
         elif marker == "VAR":
-            result["event_type"] = "Special Dividend"; result["subtype"] = "Variable"
+            result["event_type"] = "Cash Dividend"
         else:
             result["event_type"] = "Cash Dividend"
 
@@ -388,7 +382,7 @@ def classify_event(row: dict) -> dict:
     # ── DIVRC (REIT Dividend Reclassification) ────────────────────────────────
     if eventcd == "DIVRC":
         result["event_type"] = "Cash Dividend"
-        result["subtype"]    = "REIT Reclassification"
+        result["subtype"]    = ""
         if gross:
             result["dividend_amount"] = gross; result["tax_marker"] = "GROSS"
         elif net:
