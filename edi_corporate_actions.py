@@ -276,9 +276,12 @@ def classify_event(row: dict) -> dict:
             result["stock_dividend_ratio"] = f"{1 + ratio:.6f}"
         return result
 
-    # ── DIV + B → Cash & Stock Dividend ──────────────────────────────────────
-    if eventcd == "DIV" and paytypecd == "B" and marker != "SPL":
-        result["event_type"] = "Cash + Stock Dividend"
+    # ── DIV + B → Cash & Stock Dividend (or Special & Stock Dividend if marker=SPL) ──
+    if eventcd == "DIV" and paytypecd == "B":
+        if marker == "SPL":
+            result["event_type"] = "Special + Stock Dividend"
+        else:
+            result["event_type"] = "Cash + Stock Dividend"
         result["subtype"]    = "Both"
         if gross:
             result["dividend_amount"] = gross; result["tax_marker"] = "GROSS"
@@ -984,13 +987,19 @@ def build_rows(processed_records):
             row_non["Adjusted_WHT"]    = ""
             row_non["Subtype"]         = cl.get("_base_subtype") or ""
             rows.append(row_non)
-        elif row.get("Event_Type") == "Cash + Stock Dividend":
-            # Split the combined event into two distinct rows: one Cash Dividend
-            # (optionid='1') and one Stock Dividend (optionid='2'), both sharing
-            # the same eventid. This makes the index-loading clearer — both
-            # payouts must be processed separately.
+        elif row.get("Event_Type") in ("Cash + Stock Dividend", "Special + Stock Dividend"):
+            # Split the combined event into two distinct rows sharing the same
+            # eventid: one Cash/Special Dividend (optionid='1') for the cash leg
+            # and one Stock Dividend (optionid='2') for the stock leg.
+            # This makes the index-loading clearer — both payouts must be
+            # processed separately.
+            cash_event_type = (
+                "Special Dividend"
+                if row.get("Event_Type") == "Special + Stock Dividend"
+                else "Cash Dividend"
+            )
             row_cash = dict(row)
-            row_cash["Event_Type"]      = "Cash Dividend"
+            row_cash["Event_Type"]      = cash_event_type
             row_cash["Subtype"]         = ""
             row_cash["optionid"]        = "1"
             row_cash["Stock_Div_Pct"]   = ""
