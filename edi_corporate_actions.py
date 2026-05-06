@@ -822,20 +822,12 @@ def build_rows(processed_records):
             continue
 
         row = {col: r.get(col, "") for col in RAW_COLUMNS}
-        # Ex-Date fallback:
-        # TKOVR/MRGR → effectivedt only (= offer commencement date).
-        #   closedt (offer expiry / merger close) is already shown in MA_Close_Date
-        #   and must not be used as exdt — deal may still be pending.
-        # LIQ with no exdt but with an amount → recorddt as fallback.
-        # All other events → effectivedt only.
+        # Ex-Date fallback: when exdt is missing, fall back to effectivedt.
+        # Applies uniformly to all event types (TKOVR/MRGR/LIQ/dividends/etc.).
+        # Note: closedt (M&A offer expiry / merger close) is shown separately as
+        # MA_Close_Date and must not be used as exdt — deal may still be pending.
         if not row.get("exdt"):
-            if (r.get("eventcd", "").upper() == "LIQ"
-                    and (r.get("grossdividend") or r.get("netdividend")
-                         or r.get("minimumprice") or r.get("maximumprice"))
-                    and r.get("recorddt")):
-                row["exdt"] = r.get("recorddt", "")
-            else:
-                row["exdt"] = r.get("effectivedt", "")
+            row["exdt"] = r.get("effectivedt", "")
         # initialise derived fields
         for f in DIV_FIELDS + MA_FIELDS:
             row[f] = ""
