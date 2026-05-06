@@ -91,8 +91,8 @@ def _display_fields(event_type: str) -> tuple:
 
 
 def _is_cancelled(row: dict) -> bool:
-    """True if the row's Evt_Status indicates a cancelled event."""
-    return (row.get("Evt_Status") or "").strip().lower() == "cancelled"
+    """True if the row is flagged as cancelled."""
+    return bool(row.get("Is_Cancelled"))
 
 
 def _norm(v):
