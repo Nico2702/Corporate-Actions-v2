@@ -423,7 +423,7 @@ def build_rows(processed_records, isin: str = "", mic: str = ""):
             # Core
             "Event_Type":   cl["event_type"],
             "Subtype":      cl["subtype"],
-            "Evt_Status":   cl.get("status_override") or r.get("dividendStatus") or "",
+            "Is_Cancelled": (cl.get("status_override") == "Cancelled" or r.get("dividendStatus") == "Cancelled"),
             "eventid":      r.get("eventId", ""),
             "optionid":     "1",     # FactSet has no optionid concept
             "eventcd":      eventcd,
