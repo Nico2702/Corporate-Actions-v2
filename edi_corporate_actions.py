@@ -959,9 +959,9 @@ def build_rows(processed_records):
         row["Creation_Date"] = r.get("eventcreatedt", "")
         # REIT_Flag — True if structcd=REIT
         row["REIT_Flag"] = (r.get("structcd") or "").upper() == "REIT"
-        # Evt_Status — human-readable action code
+        # Is_Cancelled — true if evtactioncd is C (Cancelled) or D (Deleted)
         _act = (r.get("evtactioncd") or "").upper()
-        row["Evt_Status"] = {"I": "New", "U": "Updated", "D": "Deleted", "C": "Cancelled"}.get(_act, _act)
+        row["Is_Cancelled"] = _act in ("C", "D")
 
         # ── PID split: if PID_Amount and Non_PID_Amount both known → two rows ──
         pid_amt     = r.get("_pid_amount") or ""
