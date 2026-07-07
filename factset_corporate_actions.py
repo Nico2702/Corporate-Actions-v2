@@ -321,6 +321,9 @@ def classify_event(row: dict, mic: str = "") -> dict:
         elif div_type == 5:
             result["event_type"] = "Special Dividend"
             result["subtype"]    = "Liquidation"
+        elif div_type == 6:
+            # Return of Capital (global — always NET, no BVMF split like 21)
+            result["subtype"]    = "Return of Capital"
         elif div_type == 10:
             result["event_type"] = "Special Dividend"
             result["subtype"]    = "Short-Term Capital Gains"
@@ -500,9 +503,11 @@ def build_rows(processed_records, isin: str = "", mic: str = ""):
             row["Dividend_Amount"]          = r.get("amtGrossDecUnadj") or ""
             row["Dividend_Amount_Adjusted"] = r.get("_amtGrossDecAdjusted") or ""
             row["Dividend_Currency"]        = r.get("declaredCurrency") or ""
-            # Tax_Marker: NET only when divTypeCode=21 AND it's a real Return of
-            # Capital — i.e. not on BVMF, where 21 means Interest on Capital (GROSS).
-            if div_type == 21 and mic != "BVMF":
+            # Tax_Marker: NET for Return of Capital variants:
+            #   - divTypeCode=6  → Return of Capital (always NET, global)
+            #   - divTypeCode=21 non-BVMF → Return of Capital (NET);
+            #     on BVMF, code 21 means Interest on Capital (GROSS with 17.5% WHT).
+            if div_type == 6 or (div_type == 21 and mic != "BVMF"):
                 row["Tax_Marker"] = "NET"
             else:
                 row["Tax_Marker"] = "GROSS"
