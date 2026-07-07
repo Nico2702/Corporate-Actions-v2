@@ -146,40 +146,24 @@ COLUMN_LABELS = {
 }
 
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
+# ── API keys (silently loaded from .streamlit/secrets.toml) ───────────────────
 
 def _get_secret(key: str, default: str = "") -> str:
     """Read a value from .streamlit/secrets.toml. Returns default if the file
-    or key is missing, so the app still works without a secrets file."""
+    or key is missing, so the app still runs (fetch calls will simply fail)."""
     try:
         return st.secrets[key]
     except Exception:
         return default
 
 
-with st.sidebar:
-    st.markdown("## ⚙️ API Settings")
-    edi_default     = _get_secret("edi_key")
-    factset_default = _get_secret("factset_key")
+edi_key     = _get_secret("edi_key")
+factset_key = _get_secret("factset_key")
 
-    edi_key     = st.text_input(
-        "EDI API Key",
-        value=edi_default,
-        type="password",
-        placeholder="Bearer token...",
-        help="✓ Loaded from .streamlit/secrets.toml" if edi_default
-             else "Set edi_key in .streamlit/secrets.toml to auto-load",
-    )
-    factset_key = st.text_input(
-        "FactSet API Key",
-        value=factset_default,
-        type="password",
-        placeholder="(optional, FactSet integration in progress)",
-        help="✓ Loaded from .streamlit/secrets.toml" if factset_default
-             else "Set factset_key in .streamlit/secrets.toml to auto-load",
-    )
-    st.divider()
-    st.markdown("### 🔍 Query Parameters")
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("## 🔍 Query Parameters")
     isin   = st.text_input("ISIN", placeholder="e.g. CH1256740924", help="Used by EDI")
     ticker = st.text_input("Ticker (FactSet)", placeholder="e.g. AAPL-NAS", help="FactSet ticker-exchange format")
     op_mic = st.text_input("Operational MIC", placeholder="e.g. XSWX")
