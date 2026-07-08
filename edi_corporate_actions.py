@@ -646,6 +646,16 @@ def merge_events(records_list):
         if len(set(real_ids)) <= 1:
             frank_recs = [r for r in group if (r.get("eventcd") or "").upper() == "FRANK"]
             other_recs = [r for r in group if (r.get("eventcd") or "").upper() != "FRANK"]
+
+            # Multi-payment pattern (e.g. INS installments in PL/LT markets):
+            # Same eventid + optionid + mic but different paydts → separate tranches.
+            # Keep all such records; deduplicate() has already collapsed true duplicates.
+            paydts = {r.get("paydt", "") for r in other_recs if r.get("paydt", "")}
+            if len(paydts) > 1:
+                merged.extend(other_recs)
+                merged.extend(frank_recs)
+                continue
+
             chosen = next((r for r in other_recs if str(r.get("optionid","")).strip()), other_recs[0] if other_recs else group[0])
             merged.append(chosen)
             merged.extend(frank_recs)
