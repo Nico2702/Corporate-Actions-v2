@@ -358,6 +358,10 @@ def classify_event(row: dict) -> dict:
             result["event_type"] = "Cash Dividend"
         elif marker == "VAR":
             result["event_type"] = "Cash Dividend"
+        elif marker == "INS":
+            # Installment payment (e.g. Polish market — dividend paid in tranches,
+            # same eventid + exdt but different paydts). No subtype, ordinary Cash Dividend.
+            result["event_type"] = "Cash Dividend"
         else:
             result["event_type"] = "Cash Dividend"
 
@@ -527,7 +531,7 @@ def deduplicate(records):
     raw_df = (
         raw_df
         .sort_values(["_ts", "_eventcd_priority"], ascending=[False, True])
-        .drop_duplicates(subset=["eventid", "optionid", "operationalmic"], keep="first")
+        .drop_duplicates(subset=["eventid", "optionid", "operationalmic", "paydt"], keep="first")
         .drop(columns=["_ts", "_eventcd_priority"])
     )
     return raw_df.to_dict(orient="records")
