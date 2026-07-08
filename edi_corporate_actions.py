@@ -1129,7 +1129,7 @@ def fetch_records(
     When `from_date` is set, performs TWO calls in parallel — one with
     `fromexdate=` (filters by ex-date) and one with `fromdate=` (broader
     filter that catches M&A / Spin-Off events without an ex-date) — and
-    deduplicates the merged result by (eventid, optionid, operationalmic).
+    deduplicates the merged result by (eventid, optionid, operationalmic, paydt).
 
     When `from_date` is None, only a single call is made (no date filter).
 
@@ -1179,11 +1179,14 @@ def fetch_records(
         records_ex,   info_ex   = f_ex.result()
         records_full, info_full = f_full.result()
 
-    # Merge with dedup by (eventid, optionid, operationalmic).
+    # Merge with dedup by (eventid, optionid, operationalmic, paydt).
+    # paydt is included to preserve INS installment tranches (same eventid + optionid + mic,
+    # different paydts) — without it, installments would be silently collapsed here
+    # before the classifier even sees them.
     # Order: fromexdate results first (ex-date events), then fromdate-only extras.
     seen, merged = set(), []
     for r in records_ex + records_full:
-        key = (r.get("eventid"), r.get("optionid"), r.get("operationalmic"))
+        key = (r.get("eventid"), r.get("optionid"), r.get("operationalmic"), r.get("paydt"))
         if key not in seen:
             seen.add(key)
             merged.append(r)
