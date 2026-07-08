@@ -374,6 +374,21 @@ def render_edi_tab():
     st.session_state["edi_rows_processed"] = rows
     df        = pd.DataFrame(rows)
 
+    # ── Debug panel: shows record counts through each pipeline stage ─────────────
+    with st.expander("🔍 Pipeline Debug — record count per stage"):
+        st.write(f"**Raw from API:** {len(records)} record(s)")
+        st.write(f"**After deduplicate():** {len(deduped)} record(s)")
+        st.write(f"**After merge_events():** {len(processed)} record(s)")
+        st.write(f"**After build_rows():** {len(rows)} row(s)")
+        st.write(f"**DataFrame rows:** {len(df)} row(s)")
+        if len(rows) > 0:
+            preview_cols = [c for c in ("eventid", "optionid", "exdt", "paydt",
+                                          "Event_Type", "Subtype", "Dividend_Amount",
+                                          "Dividend_Currency", "marker")
+                            if any(c in r for r in rows)]
+            st.write("**Row preview (all rows before UI filters):**")
+            st.dataframe(pd.DataFrame(rows)[preview_cols] if preview_cols else pd.DataFrame(rows))
+
     # Sort by Ex-Date descending (newest first; empty exdt goes to the bottom)
     if "exdt" in df.columns:
         df = df.sort_values("exdt", ascending=False).reset_index(drop=True)
