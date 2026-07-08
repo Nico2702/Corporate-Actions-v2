@@ -138,8 +138,8 @@ def _norm_subtype_for_key(subtype: str) -> str:
     return s
 
 
-def _key(row: dict) -> tuple:
-    """Returns the match key (isin_mic, exdt, event_type, subtype) for a row.
+def _base_key(row: dict) -> tuple:
+    """Returns the base match key (isin_mic, exdt, event_type, subtype) for a row.
 
     Subtype contributes to the key only for event types listed in
     TYPES_USING_SUBTYPE_IN_KEY (Cash/Special Dividend) — and even then only
@@ -159,6 +159,49 @@ def _key(row: dict) -> tuple:
     else:
         subtype = ""
     return (isin_mic, row.get("exdt") or "", event_type, subtype)
+
+
+def _build_key_maps(edi_rows, fs_rows):
+    """Build key → row maps for both sources.
+
+    Default match key is the base key (isin_mic, exdt, event_type, subtype).
+    However, when EITHER side has multiple records with the same base key
+    (e.g. Polish INS installments — same eventid, same exdt, different paydts),
+    that base key is upgraded to an extended key (base_key + paydt) on BOTH
+    sides. This lets installments match individually while regular events
+    continue to match on the base key.
+    """
+    # Count occurrences of each base key on each side
+    edi_counts = {}
+    fs_counts = {}
+    for r in edi_rows:
+        b = _base_key(r)
+        edi_counts[b] = edi_counts.get(b, 0) + 1
+    for r in fs_rows:
+        b = _base_key(r)
+        fs_counts[b] = fs_counts.get(b, 0) + 1
+
+    # A base key needs paydt as tiebreaker if EITHER side has duplicates
+    needs_paydt = {b for b, c in edi_counts.items() if c > 1}
+    needs_paydt |= {b for b, c in fs_counts.items() if c > 1}
+
+    def make_key(r):
+        b = _base_key(r)
+        if b in needs_paydt:
+            return b + ((r.get("paydt") or "").strip(),)
+        return b
+
+    edi_map = {}
+    fs_map  = {}
+    for r in edi_rows:
+        edi_map[make_key(r)] = r
+    for r in fs_rows:
+        fs_map[make_key(r)] = r
+    return edi_map, fs_map
+
+
+# Legacy alias — kept for any external callers using _key() directly.
+_key = _base_key
 
 
 def _filter_in_scope(rows):
@@ -220,14 +263,13 @@ def validate(edi_rows, factset_rows) -> list[dict]:
     edi_scoped = _filter_in_scope(edi_rows)
     fs_scoped  = _filter_in_scope(factset_rows)
 
-    edi_by_key = {_key(r): r for r in edi_scoped}
-    fs_by_key  = {_key(r): r for r in fs_scoped}
+    edi_by_key, fs_by_key = _build_key_maps(edi_scoped, fs_scoped)
 
     all_keys = set(edi_by_key) | set(fs_by_key)
     results = []
 
     for k in sorted(all_keys, key=lambda x: (x[1] or "", x[0], x[2], x[3]), reverse=True):
-        isin_mic, exdt, etype, _normalized_subtype = k
+        isin_mic, exdt, etype, _normalized_subtype = k[:4]
         edi_row = edi_by_key.get(k)
         fs_row  = fs_by_key.get(k)
 
