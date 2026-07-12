@@ -322,7 +322,10 @@ def classify_event(row: dict, mic: str = "") -> dict:
             result["event_type"] = "Special Dividend"
             result["subtype"]    = "Liquidation"
         elif div_type == 6:
-            # Return of Capital (global — always NET, no BVMF split like 21)
+            # Return of Capital (global — always NET, no BVMF split like 21).
+            # Event_Type forced to Special Dividend for alignment with EDI RCAP,
+            # which is fixed to Special Dividend regardless of spec_flg.
+            result["event_type"] = "Special Dividend"
             result["subtype"]    = "Return of Capital"
         elif div_type == 10:
             result["event_type"] = "Special Dividend"
@@ -334,13 +337,19 @@ def classify_event(row: dict, mic: str = "") -> dict:
             result["event_type"] = "Special Dividend"
             result["subtype"]    = "Medium-Term Capital Gains"
         elif div_type == 19:
+            # UK REIT Property Income Distribution.
+            # Event_Type forced to Cash Dividend for alignment with EDI PID,
+            # which is fixed to Cash Dividend regardless of spec_flg.
+            result["event_type"] = "Cash Dividend"
             result["subtype"] = "Property Income Distribution"
         elif div_type == 21:
-            # Brazil-specific: BVMF code 21 is Interest on Capital, NOT Return of Capital
+            # Brazil-specific: BVMF code 21 is Interest on Capital, NOT Return of Capital.
+            # Non-BVMF is Return of Capital, aligned with EDI RCAP → Special Dividend.
             if mic.upper() == "BVMF":
                 result["event_type"] = "Cash Dividend"
                 result["subtype"]    = "Interest on Capital"
             else:
+                result["event_type"] = "Special Dividend"
                 result["subtype"]    = "Return of Capital"
         # divTypeCode=0 → dividend is cancelled (overrides any dividendStatus from feed)
         if div_type == 0:
@@ -522,16 +531,45 @@ def build_rows(processed_records, isin: str = "", mic: str = ""):
         # On US listings (XNAS/XNYS), DVS/DVSS/BNS/BNSS are reclassified as
         # Forward Stock Split — values go into Split_* fields with EDI's
         # formula: ratio = (new + old) / old, terms = "(new+old) : old".
+        # Fallback: if distNewTerm/distOldTerm are missing, derive Split_Ratio
+        # from adjFactor (e.g. adjFactor=0.5 → Split_Ratio=2.0 for a 2:1 split),
+        # and Split_Terms from distPct (e.g. distPct=100 → "2 : 1").
         if is_us and eventcd in US_RECLASSIFY_TO_SPLIT:
             new = r.get("distNewTerm")
             old = r.get("distOldTerm")
+            ratio_set = False
             try:
                 rn = float(new); ro = float(old)
                 if ro:
                     row["Split_Ratio"] = f"{(rn + ro) / ro:.6f}"
                     row["Split_Terms"] = f"{int(rn + ro)} : {int(ro)}"
+                    ratio_set = True
             except (TypeError, ValueError):
                 pass
+
+            # Fallback via adjFactor when explicit terms are missing
+            if not ratio_set:
+                af = r.get("adjFactor") or r.get("adjFactorCombined")
+                try:
+                    af_val = float(af) if af is not None else None
+                    if af_val and 0 < af_val < 1:
+                        # adjFactor of 0.5 → ratio 2.0 (2-for-1 split)
+                        row["Split_Ratio"] = f"{1 / af_val:.6f}"
+                except (TypeError, ValueError):
+                    pass
+
+                # Split_Terms from distPct: 100 → "2 : 1", 200 → "3 : 1", etc.
+                pct = r.get("distPct")
+                try:
+                    p = float(pct) if pct is not None else None
+                    if p is not None and p > 0:
+                        # distPct = N% → new:old = (1 + N/100) : 1
+                        # For clean integer ratios (100, 200, 300, ...) use integer terms
+                        new_units = 1 + p / 100
+                        if new_units == int(new_units):
+                            row["Split_Terms"] = f"{int(new_units)} : 1"
+                except (TypeError, ValueError):
+                    pass
 
         # ── Stock Dividend (DVS/DVSS use distPct directly) — non-US ──────────
         elif eventcd in STOCK_DIV_PCT:
