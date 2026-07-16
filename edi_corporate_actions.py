@@ -159,22 +159,14 @@ def classify_event(row: dict) -> dict:
             result["eca_stock_ratio"]    = f"{ratio:.6f}" if ratio else ""
             result["eca_stock_terms"]    = fmt_stock_terms(rationew, ratioold) if ratio else ""
         elif paytypecd == "B":
-            # CVR (Contingent Value Right) is technically a security but economically
-            # a contingent cash payment. When the stock-leg is a CVR, classify as
-            # Cash-only Deal (no Stock terms populated).
-            if (row.get("outsectycd") or "").upper() == "CVR":
-                result["ma_deal_type"]           = "Cash"
-                result["ma_cash_terms"]          = row.get("minimumprice") or row.get("maximumprice") or ""
-                result["ma_cash_terms_currency"] = row.get("ratecurencd") or row.get("tradingcurencd") or ""
-            else:
-                result["ma_deal_type"]           = "Cash & Stock"
-                result["ma_cash_terms"]          = row.get("minimumprice") or row.get("maximumprice") or ""
-                result["ma_cash_terms_currency"] = row.get("ratecurencd") or row.get("tradingcurencd") or ""
-                result["ma_offeror_isin"]        = row.get("outisin")         or ""
-                result["ma_offeror_ticker"]      = row.get("outbbgcompticker") or ""
-                ratio = safe_div(rationew, ratioold)
-                result["eca_stock_ratio"] = f"{ratio:.6f}" if ratio else ""
-                result["eca_stock_terms"] = fmt_stock_terms(rationew, ratioold) if ratio else ""
+            result["ma_deal_type"]           = "Cash & Stock"
+            result["ma_cash_terms"]          = row.get("minimumprice") or row.get("maximumprice") or ""
+            result["ma_cash_terms_currency"] = row.get("ratecurencd") or row.get("tradingcurencd") or ""
+            result["ma_offeror_isin"]        = row.get("outisin")         or ""
+            result["ma_offeror_ticker"]      = row.get("outbbgcompticker") or ""
+            ratio = safe_div(rationew, ratioold)
+            result["eca_stock_ratio"] = f"{ratio:.6f}" if ratio else ""
+            result["eca_stock_terms"] = fmt_stock_terms(rationew, ratioold) if ratio else ""
         elif paytypecd == "D":
             result["ignore"] = True  # Debenture legs ignored
         else:
