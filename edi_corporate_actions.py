@@ -159,14 +159,22 @@ def classify_event(row: dict) -> dict:
             result["eca_stock_ratio"]    = f"{ratio:.6f}" if ratio else ""
             result["eca_stock_terms"]    = fmt_stock_terms(rationew, ratioold) if ratio else ""
         elif paytypecd == "B":
-            result["ma_deal_type"]           = "Cash & Stock"
-            result["ma_cash_terms"]          = row.get("minimumprice") or row.get("maximumprice") or ""
-            result["ma_cash_terms_currency"] = row.get("ratecurencd") or row.get("tradingcurencd") or ""
-            result["ma_offeror_isin"]        = row.get("outisin")         or ""
-            result["ma_offeror_ticker"]      = row.get("outbbgcompticker") or ""
-            ratio = safe_div(rationew, ratioold)
-            result["eca_stock_ratio"] = f"{ratio:.6f}" if ratio else ""
-            result["eca_stock_terms"] = fmt_stock_terms(rationew, ratioold) if ratio else ""
+            # CVR (Contingent Value Right) is technically a security but economically
+            # a contingent cash payment. When the stock-leg is a CVR, classify as
+            # Cash-only Deal (no Stock terms populated).
+            if (row.get("outsectycd") or "").upper() == "CVR":
+                result["ma_deal_type"]           = "Cash"
+                result["ma_cash_terms"]          = row.get("minimumprice") or row.get("maximumprice") or ""
+                result["ma_cash_terms_currency"] = row.get("ratecurencd") or row.get("tradingcurencd") or ""
+            else:
+                result["ma_deal_type"]           = "Cash & Stock"
+                result["ma_cash_terms"]          = row.get("minimumprice") or row.get("maximumprice") or ""
+                result["ma_cash_terms_currency"] = row.get("ratecurencd") or row.get("tradingcurencd") or ""
+                result["ma_offeror_isin"]        = row.get("outisin")         or ""
+                result["ma_offeror_ticker"]      = row.get("outbbgcompticker") or ""
+                ratio = safe_div(rationew, ratioold)
+                result["eca_stock_ratio"] = f"{ratio:.6f}" if ratio else ""
+                result["eca_stock_terms"] = fmt_stock_terms(rationew, ratioold) if ratio else ""
         elif paytypecd == "D":
             result["ignore"] = True  # Debenture legs ignored
         else:
@@ -502,6 +510,29 @@ def classify_event(row: dict) -> dict:
         result["old_trading_ccy"]= row.get("oldtradingcurencd") or ""
         return result
 
+    # ── PRCHG (Primary Exchange Change) ───────────────────────────────────────
+    # Instrument moves from one primary exchange to another (e.g. NYSE → Nasdaq).
+    # Trading continues without interruption; only the primary listing venue changes.
+    # Classified as ID Change so downstream systems update the exchange metadata,
+    # but the ISIN and typically the ticker remain unchanged.
+    if eventcd == "PRCHG":
+        result["event_type"]     = "ID Change"
+        result["subtype"]        = "Listing Change"
+        result["id_change_dt"]   = row.get("effectivedt") or ""
+        result["new_exchg"]      = row.get("newexchgcd")        or ""
+        result["old_exchg"]      = row.get("oldexchgcd")        or ""
+        result["new_local_code"] = row.get("newlocalcode")      or ""
+        result["old_local_code"] = row.get("oldlocalcode")      or ""
+        result["new_country"]    = row.get("newcntrycd")        or ""
+        result["old_country"]    = row.get("oldcntrycd")        or ""
+        result["new_isin"]       = row.get("newisin")           or ""
+        result["old_isin"]       = row.get("oldisin")           or ""
+        result["new_currency"]   = row.get("newcurencd")        or ""
+        result["old_currency"]   = row.get("oldcurencd")        or ""
+        result["new_trading_ccy"]= row.get("newtradingcurencd") or ""
+        result["old_trading_ccy"]= row.get("oldtradingcurencd") or ""
+        return result
+
     return result
 
 
@@ -540,6 +571,63 @@ def deduplicate(records):
 
 # ── Step 2: Merge ─────────────────────────────────────────────────────────────
 def merge_events(records_list):
+    # Pre-pass: Suppress LSTAT "Delisting" records that are only a side-effect
+    # of a Primary Exchange Change (PRCHG). When an instrument moves its primary
+    # listing from one exchange to another (e.g. NYSE → Nasdaq), EDI emits both:
+    #   - a PRCHG record describing the actual exchange change, and
+    #   - an LSTAT record marking the old listing as "delisted" (technically true
+    #     but semantically misleading, since trading continues on the new venue).
+    # We drop the LSTAT when both conditions hold:
+    #   (a) LSTAT.relatedeventcd == "PRCHG"  (vendor self-flagging)
+    #   (b) A PRCHG record exists for the same ISIN in this batch (independent check)
+    prchg_isins = {
+        (r.get("isin") or "").upper()
+        for r in records_list
+        if (r.get("eventcd") or "").upper() == "PRCHG" and (r.get("isin") or "")
+    }
+    if prchg_isins:
+        records_list = [
+            r for r in records_list
+            if not (
+                (r.get("eventcd") or "").upper() == "LSTAT"
+                and (r.get("relatedeventcd") or "").upper() == "PRCHG"
+                and (r.get("isin") or "").upper() in prchg_isins
+            )
+        ]
+
+    # Pre-pass: Suppress ID-Change records where old == new (no actual change).
+    # EDI sometimes emits change-events as metadata refreshes where both sides
+    # carry identical values — e.g. an ICC record with oldisin == newisin, or a
+    # PRCHG record with oldexchgcd == newexchgcd. These are semantic no-ops:
+    # downstream consumers would see "ID Change" without any actual change.
+    # Rule per event code (primary comparison field pair):
+    #   ICC   → (oldisin,          newisin)
+    #   LCC   → (oldlocalcode,     newlocalcode)
+    #   PRCHG → (oldexchgcd,       newexchgcd)
+    #   SDCHG → (oldtradingcurencd, newtradingcurencd)  — SDCHG's payload is the currency
+    # A record is dropped only when the pair is defined AND both values are
+    # non-empty AND equal (case-sensitive). If one side is empty and the other
+    # is populated, we keep the record (may be a genuine change from unknown to
+    # known state).
+    NOOP_ID_CHANGE_FIELDS = {
+        "ICC":   ("oldisin", "newisin"),
+        "LCC":   ("oldlocalcode", "newlocalcode"),
+        "PRCHG": ("oldexchgcd", "newexchgcd"),
+        "SDCHG": ("oldtradingcurencd", "newtradingcurencd"),
+    }
+
+    def _is_id_change_noop(rec):
+        code = (rec.get("eventcd") or "").upper()
+        pair = NOOP_ID_CHANGE_FIELDS.get(code)
+        if not pair:
+            return False
+        old_val = (rec.get(pair[0]) or "").strip()
+        new_val = (rec.get(pair[1]) or "").strip()
+        # Only suppress if both are populated AND equal
+        return bool(old_val) and old_val == new_val
+
+    records_list = [r for r in records_list if not _is_id_change_noop(r)]
+
     # Pre-pass: transfer frankdiv/unfrankdiv from FRANK records onto DIV records (same eventid+mic)
     frank_map = {}
     for r in records_list:
